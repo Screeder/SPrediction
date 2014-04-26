@@ -64,6 +64,7 @@ namespace SPrediction
                 this.hitChance = hitChance;
                 this.maxHits = maxHits;
                 this.positions = positions;
+                this.valid = true;
             }
 
             public bool IsValid()
