@@ -406,5 +406,67 @@ namespace SPrediction
             distance = Math.Sqrt(distance);
             return distance;
         }
+
+        public static Quaternion mul(Quaternion quaternion, Quaternion other)
+        {
+            float newX = quaternion.W * other.X + quaternion.X * other.W + quaternion.Y * other.Z - quaternion.Z * other.Y;
+            float newY = quaternion.W * other.Y + quaternion.Y * other.W + quaternion.Z * other.X - quaternion.X * other.Z;
+            float newZ = quaternion.W * other.Z + quaternion.Z * other.W + quaternion.X * other.Y - quaternion.Y * other.X;
+            float newW = quaternion.W * other.W - quaternion.X * other.X - quaternion.Y * other.Y - quaternion.Z * other.Z;
+            quaternion.X = newX;
+            quaternion.Y = newY;
+            quaternion.Z = newZ;
+            quaternion.W = newW;
+            return quaternion;
+        }
+
+        public static Quaternion Conjungate(Quaternion quaternion)
+        {
+            quaternion.X = -quaternion.X;
+            quaternion.Y = -quaternion.Y;
+            quaternion.Z = -quaternion.Z;
+            return quaternion;
+        }
+
+        public static Vector3 CalcFinalVector(Vector3 StartingVector, Vector3 RotationVector, float angle)
+        {
+            var starting_x = StartingVector.X;
+            var starting_y = StartingVector.Y;
+            var starting_z = StartingVector.Z;
+            var starting_size = Math.Sqrt(Math.Pow(starting_x, 2) + Math.Pow(starting_y, 2) + Math.Pow(starting_z, 2));
+            var norm_starting_x = starting_x / starting_size;
+            var norm_starting_y = starting_y / starting_size;
+            var norm_starting_z = starting_z / starting_size;
+
+            var rot_ax_x = RotationVector.X;
+            var rot_ax_y = RotationVector.Y;
+            var rot_ax_z = RotationVector.Z;
+            var rot_ax_size = Math.Sqrt(Math.Pow(rot_ax_x, 2) + Math.Pow(rot_ax_y, 2) + Math.Pow(rot_ax_z, 2));
+            var x = rot_ax_x / rot_ax_size;
+            var y = rot_ax_y / rot_ax_size;
+            var z = rot_ax_z / rot_ax_size;
+
+            var rho_deg = angle;
+
+            var rho_rad = rho_deg / 180 * Math.PI;
+
+            var c = Math.Cos(rho_rad);
+            var s = Math.Sin(rho_rad);
+            var t = 1 - Math.Cos(rho_rad);
+
+
+            var norm_final_x = norm_starting_x * (t * x * x + c) + norm_starting_y * (t * x * y - s * z) + norm_starting_z * (t * x * z + s * y);
+            var norm_final_y = norm_starting_x * (t * x * y + s * z) + norm_starting_y * (t * y * y + c) + norm_starting_z * (t * y * z - s * x);
+            var norm_final_z = norm_starting_x * (t * x * z - s * y) + norm_starting_y * (t * y * z + s * x) + norm_starting_z * (t * z * z + c);
+            double final_x = norm_final_x * starting_size;
+            double final_y = norm_final_y * starting_size;
+            double final_z = norm_final_z * starting_size;
+
+            final_x = Math.Round(final_x * 1000000) / 1000000;
+            final_y = Math.Round(final_y * 1000000) / 1000000;
+            final_z = Math.Round(final_z * 1000000) / 1000000;
+
+            return new Vector3((float)final_x, (float)final_y, (float)final_z);
+        }
     }
 }

@@ -5,8 +5,6 @@ using LeagueSharp;
 using SharpDX;
 using Color = System.Drawing.Color;
 
-//CONE BUGGY ATM TEST OR NEW FUNCTION NEEDED
-
 namespace SPrediction
 {
 
@@ -14,12 +12,26 @@ namespace SPrediction
     {
         private static Dictionary<String, double> hitboxes = new Dictionary<String, double>();
         private static bool bHitBoxes = false;
+        private static Dictionary<String, double> projectileSpeeds = new Dictionary<String, double>();
+
+        private static List<ActiveAttacks> activeAttacks = new List<ActiveAttacks>();
 
         private static Vector3 castPositionDraw;
         private static Vector3 positionDraw;
 
+        private static Vector3 positionLineDraw = new Vector3();
+        private static Vector3 positionCircularDraw = new Vector3();
+        private static Vector3 positionConeDraw = new Vector3();
+
         static List<Obj_AI_Minion> drawMinions = new List<Obj_AI_Minion>();
         static List<Vector3> drawMinionCircles = new List<Vector3>();
+
+        static Prediction()
+        {
+            InitHitboxes();
+            InitProjectileSpeeds();
+            //Obj_AI_Base.OnProcessSpellCast += CollisionProcessSpell; <---Activate when the requierments are fulfilled like getting totaldamage and checking everything
+        }
 
         public class BestPrediction
         {
@@ -73,6 +85,34 @@ namespace SPrediction
             }
         }
 
+        private class ActiveAttacks
+        {
+
+            public ActiveAttacks(Obj_AI_Base attacker, Obj_AI_Base target, float startTime, float windUpTime, float hitTime, Vector3 pos, float projectileSpeed, float damage, float animationTime)
+            {
+                this.attacker = attacker;
+                this.target = target;
+                this.startTime = startTime;
+                this.windUpTime = windUpTime;
+                this.hitTime = hitTime;
+                this.pos = pos;
+                this.projectileSpeed = projectileSpeed;
+                this.damage = damage;
+                this.animationTime = animationTime;
+            }
+
+            public Obj_AI_Base attacker;
+            public Obj_AI_Base target;
+            public float startTime;
+            public float windUpTime;
+            public float hitTime;
+            public Vector3 pos;
+            public float projectileSpeed;
+            public float damage;
+            public float animationTime;
+        }
+
+
         public enum SpellType
         {
             LINE = 0,
@@ -100,6 +140,9 @@ namespace SPrediction
             Drawing.DrawLine(test1[0], test1[1], test3[0], test3[1], 5.5f, Color.Red);
             Drawing.DrawCircle(castPositionDraw, 200, Color.Aqua);
             Drawing.DrawCircle(positionDraw, 200, Color.Green);
+            Drawing.DrawCircle(positionLineDraw, 200, Color.Brown);
+            Drawing.DrawCircle(positionCircularDraw, 200, Color.Bisque);
+            Drawing.DrawCircle(positionConeDraw, 200, Color.BlueViolet);
 
             int index = 0;
             foreach (Obj_AI_Minion minion in drawMinions)
@@ -142,12 +185,12 @@ namespace SPrediction
             if (waypoints == null)
                 return 0.0f;
             float Max = 0;
-            Vector3 CV = new Vector3(currentWaypoint.X, 0, currentWaypoint.Y) - unit.Position;
+            Vector3 CV = new Vector3(currentWaypoint.X, 0, currentWaypoint.Y) - unit.ServerPosition;
             foreach (Vector3 waypoint in waypoints)
             {
                 float angle = Utils.AngleBetween(new Vector3(0, 0, 0), CV,
                                            new Vector3(waypoint.X, 0, waypoint.Y) -
-                                           new Vector3(unit.Position.X, 0, unit.Position.Y));
+                                           new Vector3(unit.ServerPosition.X, 0, unit.ServerPosition.Y));
                 if (angle > Max)
                     Max = angle;
             }
@@ -166,7 +209,7 @@ namespace SPrediction
                     break;
                 }
             }
-            pathes2.Add(unit.Position);
+            pathes2.Add(unit.ServerPosition);
             pathes2.AddRange(pathes);
             return pathes2;
         }
@@ -301,7 +344,7 @@ namespace SPrediction
                 hitChance = 2;
 
 
-            float angle = MaxAngle(unit, waypoints[waypoints.Count() - 1], unit.Position);
+            float angle = MaxAngle(unit, waypoints[waypoints.Count() - 1], unit.ServerPosition);
             if (angle > 90)
                 hitChance = 1;
             else if (angle < 30 && CountWaypoints(unit) >= 1)
@@ -318,10 +361,10 @@ namespace SPrediction
 
             if (
                 Utils.AngleBetween(new Vector3(from.X, from.Y, from.Z),
-                             new Vector3(unit.Position.X, unit.Position.Y, unit.Position.Z), castPosition) > 60)
+                             new Vector3(unit.ServerPosition.X, unit.ServerPosition.Y, unit.ServerPosition.Z), castPosition) > 60)
                 hitChance = 1;
 
-            if (Utils.GetDistance(ObjectManager.Player.Position, unit.Position) < 250)
+            if (Utils.GetDistance(ObjectManager.Player.ServerPosition, unit.ServerPosition) < 250)
             {
                 hitChance = 2;
                 Vector3 object2 = CalculateTargetPosition(unit, delay*0.5f, radius, speed*2, from);
@@ -341,7 +384,6 @@ namespace SPrediction
             {
                 return new BestPrediction();
             }
-            InitHitboxes();
             if (Utils.IsValidFloat(range))
             {
                 range = range - 10;
@@ -372,11 +414,11 @@ namespace SPrediction
             }
             else
             {
-                from = ObjectManager.Player.Position;
+                from = ObjectManager.Player.ServerPosition;
             }
 
             bool fromMyHero;
-            if (Utils.GetDistanceSqr(from, ObjectManager.Player.Position) < 50 * 50)
+            if (Utils.GetDistanceSqr(from, ObjectManager.Player.ServerPosition) < 50 * 50)
             {
                 fromMyHero = true;
             }
@@ -429,7 +471,7 @@ namespace SPrediction
             }
             else if (Utils.IsValidVector3(unit.Position) && Utils.GetDistance(unit.Position, from) < range && !unit.IsMoving)
             {
-                pos = unit.Position;
+                pos = unit.ServerPosition;
                 positionDraw = pos;
             }
             else
@@ -464,7 +506,7 @@ namespace SPrediction
                     drawMinionCircles = minionCircles;
 
                     if (Utils.GetDistanceSqr(from, castPosition) <= Math.Pow(range, 2) &&
-                        Utils.GetDistanceSqr(from, minion.Position) <= Math.Pow(range + 100, 2))
+                        Utils.GetDistanceSqr(from, minion.ServerPosition) <= Math.Pow(range + 100, 2))
                     {
                         Vector3 temp = new Vector3();
                         Vector3 pos = new Vector3();
@@ -474,7 +516,7 @@ namespace SPrediction
                         }
                         else
                         {
-                            pos = minion.Position;
+                            pos = minion.ServerPosition;
                         }
                         Vector3 posHero = new Vector3();
                         if (unit.IsMoving)
@@ -483,7 +525,7 @@ namespace SPrediction
                         }
                         else
                         {
-                            posHero = unit.Position;
+                            posHero = unit.ServerPosition;
                         }
                         if (waypoints.Count > 1 && Utils.IsValidVector3(waypoints[0]) && Utils.IsValidVector3(waypoints[1]))
                         {
@@ -519,7 +561,7 @@ namespace SPrediction
             List<Obj_AI_Minion> minions = new List<Obj_AI_Minion>();
             foreach (Obj_AI_Minion minion in ObjectManager.Get<Obj_AI_Minion>())
             {
-                if (minion.Team != ObjectManager.Player.Team && Utils.GetDistance(from, minion.Position) < range + 500 * (delay + range / speed))
+                if (minion.Team != ObjectManager.Player.Team && Utils.GetDistance(from, minion.ServerPosition) < range + 500 * (delay + range / speed))
                 {
                     if (minion.IsValid)
                         minions.Add(minion);
@@ -573,7 +615,7 @@ namespace SPrediction
             foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
                 if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
-                    Utils.GetDistanceSqr(hero.Position, ObjectManager.Player.Position) <= (range * 1.5) * (range * 1.5))
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <= (range * 1.5) * (range * 1.5))
                 {
                     BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision, SpellType.CIRCULAR);
                     if (objects2 == null || !objects2.IsValid())
@@ -598,6 +640,7 @@ namespace SPrediction
 
                 if (radius2 <= radius + GetHitBox(unit) - 8)
                 {
+                    positionCircularDraw = center2;
                     return new BestPredictionAOE(center2, mainHitChance, points.Count, points);
                 }
 
@@ -616,7 +659,7 @@ namespace SPrediction
 
                 points.RemoveAt(maxdistindex);
             }
-
+            positionCircularDraw = mainCastPosition;
             return new BestPredictionAOE(mainCastPosition, mainHitChance, points.Count, points);
         }
 
@@ -698,13 +741,13 @@ namespace SPrediction
             }
             if (!Utils.IsValidVector3(from))
             {
-                from = ObjectManager.Player.Position;
+                from = ObjectManager.Player.ServerPosition;
             }
 
             foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
                 if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
-                    Utils.GetDistanceSqr(hero.Position, ObjectManager.Player.Position) <= (range * 1.5) * (range * 1.5))
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <= (range * 1.5) * (range * 1.5))
                 {
                     BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision, SpellType.LINE);
                     if (objects2 == null || !objects2.IsValid())
@@ -775,9 +818,10 @@ namespace SPrediction
                         }
                     }
                 }
+                positionLineDraw = (p1 + p2)/2;
                 return new BestPredictionAOE((p1 + p2) / 2, mainHitChance, maxHit, points);
             }
-
+            positionLineDraw = mainCastPosition;
             return new BestPredictionAOE(mainCastPosition, mainHitChance, 1, points);
         }
 
@@ -795,9 +839,9 @@ namespace SPrediction
                     result = result + 1;
                     hitpoints.Add(t);
                 } 
-                else if (i == 1)
+                else if (i == 0)
                 {
-                    return new object[] { result, hitpoints };
+                    return new object[] { -1, hitpoints };
                 }
             }
             return new object[]{result, hitpoints};
@@ -840,7 +884,7 @@ namespace SPrediction
             foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
                 if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
-                    Utils.GetDistanceSqr(hero.Position, ObjectManager.Player.Position) <= (range * 1.5) * (range * 1.5))
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <= (range * 1.5) * (range * 1.5))
                 {
                     BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision, SpellType.LINE);
                     if (objects2 == null || !objects2.IsValid())
@@ -851,7 +895,7 @@ namespace SPrediction
                     int hitChance2 = objects2.hitChance;
                     if (Utils.GetDistanceSqr(from, castPosition2) < (range * range))
                     {
-                        points.Add(castPosition2 - from);
+                        points.Add(castPosition2);
                     }
                 }
             }
@@ -910,15 +954,9 @@ namespace SPrediction
                         }
                     }
                 }
-                p1 = p1 + from;
-                p2 = p2 + from;
-
-                Vector3 temp = (((p1 + p2) / 2) - from);
-                temp.Normalize();
-                Vector3.Multiply(temp, range);
-                temp = Utils.Vector3Rotate(temp, 0, angle / 2, 0);
-
-                return new BestPredictionAOE(from + temp, mainHitChance, maxHit, points);
+                Vector3 temp = (((p1) + (p2))/2);
+                positionConeDraw = temp;
+                return new BestPredictionAOE(temp, mainHitChance, maxHit, points);
             }
             else
             {
@@ -926,12 +964,540 @@ namespace SPrediction
             }
         }
 
+        private static float GetProjectileSpeed(Obj_AI_Base unit)
+        {
+            foreach (KeyValuePair<string, double> projectileSpeed in projectileSpeeds)
+            {
+                if (projectileSpeed.Key.Contains(unit.SkinName))
+                {
+                    return (float)projectileSpeed.Value;
+                }
+            }
+            return float.MaxValue;
+        }
+
+        private static void CollisionProcessSpell(Obj_AI_Base unit, GameObjectProcessSpellCastEventArgs spell)
+        {
+            Obj_AI_Minion target = new Obj_AI_Minion();
+            foreach (Obj_AI_Minion minion in ObjectManager.Get<Obj_AI_Minion>())
+            {
+                if (spell.End == minion.ServerPosition)
+                {
+                    target = minion;
+                    break;
+                }
+            }
+            if (unit.IsValid && unit.Type != ObjectManager.Player.Type && target.IsValid && unit.Team == ObjectManager.Player.Team && (spell.SData.Name.Contains("attack") || spell.SData.Name.Contains("frostarrow")))
+            {
+                if (Utils.GetDistanceSqr(unit.ServerPosition, ObjectManager.Player.ServerPosition) < 4000000)
+                {
+                    float time = Game.Time + spell.TimeTillPlayAnimation + (float)Utils.GetDistance(target.ServerPosition, unit.ServerPosition) / GetProjectileSpeed(unit) - Game.Ping / 2000;
+                    int i = 0;
+                    while (i <= activeAttacks.Count())
+                    {
+                        if ((activeAttacks[i].attacker.IsValid && activeAttacks[i].attacker.NetworkId == unit.NetworkId) || ((activeAttacks[i].hitTime + 3) < Game.Time))
+                        {
+                            activeAttacks.RemoveAt(i);
+                        }
+                        else
+                        {
+                            i = i + 1;
+                        }
+                    }
+                    activeAttacks.Add(new ActiveAttacks(unit, target, Game.Time - Game.Ping / 2000, spell.TimeTillPlayAnimation, time, unit.ServerPosition, GetProjectileSpeed(unit), CalcDamageOfAttack(unit, target, spell, 0), spell.AnimateCast));
+                }
+            }
+        }
+
+        private static float CalcDamageOfAttack(Obj_AI_Base source, Obj_AI_Base target, GameObjectProcessSpellCastEventArgs spell, float additionalDamage)
+        {
+            float armorPenPercent = source.PercentArmorPenetrationMod;
+            float armorPen = source.FlatArmorPenetrationMod;
+            //float totalDamage = source.totalDamage + additionalDamage.CompareTo(0) != 0 <------Change TotalDamage when DamageLib is rdy
+            //                        ? additionalDamage
+            //                        : 0;
+            float damageMultiplier = spell.SData.Name.Contains("CritAttack") ? 2 : 1;
+
+            if (source.Type == GameObjectType.obj_AI_Minion)
+            {
+                armorPenPercent = 1;
+            }
+	        else if (source.Type == GameObjectType.obj_AI_Turret)
+	        {
+	            armorPenPercent = 0.7f;
+	        }
+
+
+            if (target.Type == GameObjectType.obj_AI_Turret)
+            {
+                armorPenPercent = 1;
+                armorPen = 0;
+                damageMultiplier = 1;
+            }
+
+
+            float targetArmor = (target.Armor*armorPenPercent) - armorPen;
+            if (targetArmor < 0)
+            {
+                damageMultiplier = 1*damageMultiplier;
+            }
+            else
+            {
+                damageMultiplier = 100/(100 + targetArmor)*damageMultiplier;
+            }
+
+            if (source.Type == GameObjectType.obj_AI_Hero && target.Type == GameObjectType.obj_AI_Turret)
+            {
+                //totalDamage = Math.Max(source.totalDamage, source.BaseAttackDamage + 0.4*source.BaseAbilityDamage); <------Change TotalDamage when DamageLib is rdy
+            }
+
+            if (source.Type == GameObjectType.obj_AI_Minion && target.Type == GameObjectType.obj_AI_Hero &&
+                source.Team != GameObjectTeam.Neutral)
+            {
+                damageMultiplier = 0.60f*damageMultiplier;
+            }
+
+	        if (source.Type == GameObjectType.obj_AI_Hero && target.Type == GameObjectType.obj_AI_Turret)
+	        {
+	            damageMultiplier = 0.95f * damageMultiplier;
+	        }
+
+            if (source.Type == GameObjectType.obj_AI_Minion && target.Type == GameObjectType.obj_AI_Turret)
+	        {
+	            damageMultiplier = 0.475f * damageMultiplier;
+	        }
+
+	        if (source.Type == GameObjectType.obj_AI_Turret &&
+	            (target.SkinName == "Red_Minion_MechCannon" || target.SkinName == "Blue_Minion_MechCannon"))
+	        {
+	            damageMultiplier = 0.8f * damageMultiplier;
+	        }
+
+	        if (source.Type == GameObjectType.obj_AI_Turret &&
+	            (target.SkinName == "Red_Minion_Wizard" || target.SkinName == "Blue_Minion_Wizard" ||
+	             target.SkinName == "Red_Minion_Basic" || target.SkinName == "Blue_Minion_Basic"))
+	        {
+	            damageMultiplier = (1 / 0.875f) * damageMultiplier;
+	        }
+
+            if (source.Type == GameObjectType.obj_AI_Turret)
+            {
+                damageMultiplier = 1.05f * damageMultiplier;
+            }
+
+            return damageMultiplier/**totalDamage*/; //After TotalDamage fix return totalDamage
+        }
+
+        private static Object[] GetPredictedHealth(Obj_AI_Base unit, float time, float delay)
+        {
+	        float incDamage = 0;
+	        int i = 0;
+            float maxDamage = 0;
+            int count = 0;
+            if (delay.CompareTo(0) == 0)
+            {
+                delay = 0.07f;
+            }
+            while( i <= activeAttacks.Count())
+            {
+	            if(activeAttacks[i].attacker.IsValid && !activeAttacks[i].attacker.IsDead && activeAttacks[i].target.IsValid && !activeAttacks[i].target.IsDead && activeAttacks[i].target.NetworkId == unit.NetworkId)
+	            {
+                    float hitTime = (float)(activeAttacks[i].startTime + activeAttacks[i].windUpTime + (Utils.GetDistance(activeAttacks[i].pos, unit.ServerPosition)) / activeAttacks[i].projectileSpeed + delay);
+                    if(Game.Time < hitTime - delay && hitTime < Game.Time + time)
+                    {
+	                    incDamage = incDamage + activeAttacks[i].damage;
+	                    count = count + 1;
+	                    if(activeAttacks[i].damage > maxDamage)
+	                    {
+		                    maxDamage = activeAttacks[i].damage;
+                        }
+                    }
+                }
+            i = i + 1;
+            }
+        return new Object[]{unit.Health - incDamage, maxDamage, count};
+        }
+
+        private static float GetPredictedHealth2(Obj_AI_Base unit, float t)
+        {
+	        float damage = 0; 
+	        int i = 0;
+	        while(i <= activeAttacks.Count())
+            {
+	            int n = 0;
+	            if((Game.Time - 0.1) <= activeAttacks[i].startTime + activeAttacks[i].animationTime && activeAttacks[i].target.IsValid && !activeAttacks[i].target.IsDead && activeAttacks[i].target.NetworkId == unit.NetworkId && activeAttacks[i].attacker.IsValid && !activeAttacks[i].attacker.IsDead)
+	            {
+		            float fromT = activeAttacks[i].startTime;
+		            float toT = t + Game.Time;
+		            while(fromT < toT)
+		            {
+			            if(fromT >= Game.Time && (fromT + (activeAttacks[i].windUpTime + Utils.GetDistance(unit.ServerPosition, activeAttacks[i].pos) / activeAttacks[i].projectileSpeed)) < toT)
+			            {
+				            n = n + 1;
+			            }
+			            fromT = fromT + activeAttacks[i].animationTime;
+		            }
+	            }
+                damage = damage + n * activeAttacks[i].damage;
+                i = i + 1;
+            }
+        return unit.Health - damage;
+        }
+
+        private static void InitProjectileSpeeds()
+        {
+            projectileSpeeds.Add("Velkoz", 2000f);
+            projectileSpeeds.Add("TeemoMushroom", float.MaxValue);
+            projectileSpeeds.Add("TestCubeRender", float.MaxValue);
+            projectileSpeeds.Add("Xerath", 2000.0000f);
+            projectileSpeeds.Add("Kassadin", float.MaxValue);
+            projectileSpeeds.Add("Rengar", float.MaxValue);
+            projectileSpeeds.Add("Thresh", 1000.0000f);
+            projectileSpeeds.Add("Ziggs", 1500.0000f);
+            projectileSpeeds.Add("ZyraPassive", 1500.0000f);
+            projectileSpeeds.Add("ZyraThornPlant", 1500.0000f);
+            projectileSpeeds.Add("KogMaw", 1800.0000f);
+            projectileSpeeds.Add("HeimerTBlue", 1599.3999f);
+            projectileSpeeds.Add("EliseSpider", 500.0000f);
+            projectileSpeeds.Add("Skarner", 500.0000f);
+            projectileSpeeds.Add("ChaosNexus", 500.0000f);
+            projectileSpeeds.Add("Katarina", 467.0000f);
+            projectileSpeeds.Add("Riven", 347.79999f);
+            projectileSpeeds.Add("SightWard", 347.79999f);
+            projectileSpeeds.Add("HeimerTYellow", 1599.3999f);
+            projectileSpeeds.Add("Ashe", 2000.0000f);
+            projectileSpeeds.Add("VisionWard", 2000.0000f);
+            projectileSpeeds.Add("TT_NGolem2", float.MaxValue);
+            projectileSpeeds.Add("ThreshLantern", float.MaxValue);
+            projectileSpeeds.Add("TT_Spiderboss", float.MaxValue);
+            projectileSpeeds.Add("OrderNexus", float.MaxValue);
+            projectileSpeeds.Add("Soraka", 1000.0000f);
+            projectileSpeeds.Add("Jinx", 2750.0000f);
+            projectileSpeeds.Add("TestCubeRenderwCollision", 2750.0000f);
+            projectileSpeeds.Add("Red_Minion_Wizard", 650.0000f);
+            projectileSpeeds.Add("JarvanIV", 20.0000f);
+            projectileSpeeds.Add("Blue_Minion_Wizard", 650.0000f);
+            projectileSpeeds.Add("TT_ChaosTurret2", 1200.0000f);
+            projectileSpeeds.Add("TT_ChaosTurret3", 1200.0000f);
+            projectileSpeeds.Add("TT_ChaosTurret1", 1200.0000f);
+            projectileSpeeds.Add("ChaosTurretGiant", 1200.0000f);
+            projectileSpeeds.Add("Dragon", 1200.0000f);
+            projectileSpeeds.Add("LuluSnowman", 1200.0000f);
+            projectileSpeeds.Add("Worm", 1200.0000f);
+            projectileSpeeds.Add("ChaosTurretWorm", 1200.0000f);
+            projectileSpeeds.Add("TT_ChaosInhibitor", 1200.0000f);
+            projectileSpeeds.Add("ChaosTurretNormal", 1200.0000f);
+            projectileSpeeds.Add("AncientGolem", 500.0000f);
+            projectileSpeeds.Add("ZyraGraspingPlant", 500.0000f);
+            projectileSpeeds.Add("HA_AP_OrderTurret3", 1200.0000f);
+            projectileSpeeds.Add("HA_AP_OrderTurret2", 1200.0000f);
+            projectileSpeeds.Add("Tryndamere", 347.79999f);
+            projectileSpeeds.Add("OrderTurretNormal2", 1200.0000f);
+            projectileSpeeds.Add("Singed", 700.0000f);
+            projectileSpeeds.Add("OrderInhibitor", 700.0000f);
+            projectileSpeeds.Add("Diana", 347.79999f);
+            projectileSpeeds.Add("HA_FB_HealthRelic", 347.79999f);
+            projectileSpeeds.Add("TT_OrderInhibitor", 347.79999f);
+            projectileSpeeds.Add("GreatWraith", 750.0000f);
+            projectileSpeeds.Add("Yasuo", 347.79999f);
+            projectileSpeeds.Add("OrderTurretDragon", 1200.0000f);
+            projectileSpeeds.Add("OrderTurretNormal", 1200.0000f);
+            projectileSpeeds.Add("LizardElder", 500.0000f);
+            projectileSpeeds.Add("HA_AP_ChaosTurret", 1200.0000f);
+            projectileSpeeds.Add("Ahri", 1750.0000f);
+            projectileSpeeds.Add("Lulu", 1450.0000f);
+            projectileSpeeds.Add("ChaosInhibitor", 1450.0000f);
+            projectileSpeeds.Add("HA_AP_ChaosTurret3", 1200.0000f);
+            projectileSpeeds.Add("HA_AP_ChaosTurret2", 1200.0000f);
+            projectileSpeeds.Add("ChaosTurretWorm2", 1200.0000f);
+            projectileSpeeds.Add("TT_OrderTurret1", 1200.0000f);
+            projectileSpeeds.Add("TT_OrderTurret2", 1200.0000f);
+            projectileSpeeds.Add("TT_OrderTurret3", 1200.0000f);
+            projectileSpeeds.Add("LuluFaerie", 1200.0000f);
+            projectileSpeeds.Add("HA_AP_OrderTurret", 1200.0000f);
+            projectileSpeeds.Add("OrderTurretAngel", 1200.0000f);
+            projectileSpeeds.Add("YellowTrinketUpgrade", 1200.0000f);
+            projectileSpeeds.Add("MasterYi", float.MaxValue);
+            projectileSpeeds.Add("Lissandra", 2000.0000f);
+            projectileSpeeds.Add("ARAMOrderTurretNexus", 1200.0000f);
+            projectileSpeeds.Add("Draven", 1700.0000f);
+            projectileSpeeds.Add("FiddleSticks", 1750.0000f);
+            projectileSpeeds.Add("SmallGolem", float.MaxValue);
+            projectileSpeeds.Add("ARAMOrderTurretFront", 1200.0000f);
+            projectileSpeeds.Add("ChaosTurretTutorial", 1200.0000f);
+            projectileSpeeds.Add("NasusUlt", 1200.0000f);
+            projectileSpeeds.Add("Maokai", float.MaxValue);
+            projectileSpeeds.Add("Wraith", 750.0000f);
+            projectileSpeeds.Add("Wolf", float.MaxValue);
+            projectileSpeeds.Add("Sivir", 1750.0000f);
+            projectileSpeeds.Add("Corki", 2000.0000f);
+            projectileSpeeds.Add("Janna", 1200.0000f);
+            projectileSpeeds.Add("Nasus", float.MaxValue);
+            projectileSpeeds.Add("Golem", float.MaxValue);
+            projectileSpeeds.Add("ARAMChaosTurretFront", 1200.0000f);
+            projectileSpeeds.Add("ARAMOrderTurretInhib", 1200.0000f);
+            projectileSpeeds.Add("LeeSin", float.MaxValue);
+            projectileSpeeds.Add("HA_AP_ChaosTurretTutorial", 1200.0000f);
+            projectileSpeeds.Add("GiantWolf", float.MaxValue);
+            projectileSpeeds.Add("HA_AP_OrderTurretTutorial", 1200.0000f);
+            projectileSpeeds.Add("YoungLizard", 750.0000f);
+            projectileSpeeds.Add("Jax", 400.0000f);
+            projectileSpeeds.Add("LesserWraith", float.MaxValue);
+            projectileSpeeds.Add("Blitzcrank", float.MaxValue);
+            projectileSpeeds.Add("ARAMChaosTurretInhib", 1200.0000f);
+            projectileSpeeds.Add("Shen", 400.0000f);
+            projectileSpeeds.Add("Nocturne", float.MaxValue);
+            projectileSpeeds.Add("Sona", 1500.0000f);
+            projectileSpeeds.Add("ARAMChaosTurretNexus", 1200.0000f);
+            projectileSpeeds.Add("YellowTrinket", 1200.0000f);
+            projectileSpeeds.Add("OrderTurretTutorial", 1200.0000f);
+            projectileSpeeds.Add("Caitlyn", 2500.0000f);
+            projectileSpeeds.Add("Trundle", 347.79999f);
+            projectileSpeeds.Add("Malphite", 1000.0000f);
+            projectileSpeeds.Add("Mordekaiser", float.MaxValue);
+            projectileSpeeds.Add("ZyraSeed", float.MaxValue);
+            projectileSpeeds.Add("Vi", 1000.0000f);
+            projectileSpeeds.Add("Tutorial_Red_Minion_Wizard", 650.0000f);
+            projectileSpeeds.Add("Renekton", float.MaxValue);
+            projectileSpeeds.Add("Anivia", 1400.0000f);
+            projectileSpeeds.Add("Fizz", float.MaxValue);
+            projectileSpeeds.Add("Heimerdinger", 1500.0000f);
+            projectileSpeeds.Add("Evelynn", 467.0000f);
+            projectileSpeeds.Add("Rumble", 347.79999f);
+            projectileSpeeds.Add("Leblanc", 1700.0000f);
+            projectileSpeeds.Add("Darius", float.MaxValue);
+            projectileSpeeds.Add("OlafAxe", float.MaxValue);
+            projectileSpeeds.Add("Viktor", 2300.0000f);
+            projectileSpeeds.Add("XinZhao", 20.0000f);
+            projectileSpeeds.Add("Orianna", 1450.0000f);
+            projectileSpeeds.Add("Vladimir", 1400.0000f);
+            projectileSpeeds.Add("Nidalee", 1750.0000f);
+            projectileSpeeds.Add("Tutorial_Red_Minion_Basic", float.MaxValue);
+            projectileSpeeds.Add("ZedShadow", 467.0000f);
+            projectileSpeeds.Add("Syndra", 1800.0000f);
+            projectileSpeeds.Add("Zac", 1000.0000f);
+            projectileSpeeds.Add("Olaf", 347.79999f);
+            projectileSpeeds.Add("Veigar", 1100.0000f);
+            projectileSpeeds.Add("Twitch", 2500.0000f);
+            projectileSpeeds.Add("Alistar", float.MaxValue);
+            projectileSpeeds.Add("Akali", 467.0000f);
+            projectileSpeeds.Add("Urgot", 1300.0000f);
+            projectileSpeeds.Add("Leona", 347.79999f);
+            projectileSpeeds.Add("Talon", float.MaxValue);
+            projectileSpeeds.Add("Karma", 1500.0000f);
+            projectileSpeeds.Add("Jayce", 347.79999f);
+            projectileSpeeds.Add("Galio", 1000.0000f);
+            projectileSpeeds.Add("Shaco", float.MaxValue);
+            projectileSpeeds.Add("Taric", float.MaxValue);
+            projectileSpeeds.Add("TwistedFate", 1500.0000f);
+            projectileSpeeds.Add("Varus", 2000.0000f);
+            projectileSpeeds.Add("Garen", 347.79999f);
+            projectileSpeeds.Add("Swain", 1600.0000f);
+            projectileSpeeds.Add("Vayne", 2000.0000f);
+            projectileSpeeds.Add("Fiora", 467.0000f);
+            projectileSpeeds.Add("Quinn", 2000.0000f);
+            projectileSpeeds.Add("Kayle", float.MaxValue);
+            projectileSpeeds.Add("Blue_Minion_Basic", float.MaxValue);
+            projectileSpeeds.Add("Brand", 2000.0000f);
+            projectileSpeeds.Add("Teemo", 1300.0000f);
+            projectileSpeeds.Add("Amumu", 500.0000f);
+            projectileSpeeds.Add("Annie", 1200.0000f);
+            projectileSpeeds.Add("Odin_Blue_Minion_caster", 1200.0000f);
+            projectileSpeeds.Add("Elise", 1600.0000f);
+            projectileSpeeds.Add("Nami", 1500.0000f);
+            projectileSpeeds.Add("Poppy", 500.0000f);
+            projectileSpeeds.Add("AniviaEgg", 500.0000f);
+            projectileSpeeds.Add("Tristana", 2250.0000f);
+            projectileSpeeds.Add("Graves", 3000.0000f);
+            projectileSpeeds.Add("Morgana", 1600.0000f);
+            projectileSpeeds.Add("Gragas", float.MaxValue);
+            projectileSpeeds.Add("MissFortune", 2000.0000f);
+            projectileSpeeds.Add("Warwick", float.MaxValue);
+            projectileSpeeds.Add("Cassiopeia", 1200.0000f);
+            projectileSpeeds.Add("Tutorial_Blue_Minion_Wizard", 650.0000f);
+            projectileSpeeds.Add("DrMundo", float.MaxValue);
+            projectileSpeeds.Add("Volibear", 467.0000f);
+            projectileSpeeds.Add("Irelia", 467.0000f);
+            projectileSpeeds.Add("Odin_Red_Minion_Caster", 650.0000f);
+            projectileSpeeds.Add("Lucian", 2800.0000f);
+            projectileSpeeds.Add("Yorick", float.MaxValue);
+            projectileSpeeds.Add("RammusPB", float.MaxValue);
+            projectileSpeeds.Add("Red_Minion_Basic", float.MaxValue);
+            projectileSpeeds.Add("Udyr", 467.0000f);
+            projectileSpeeds.Add("MonkeyKing", 20.0000f);
+            projectileSpeeds.Add("Tutorial_Blue_Minion_Basic", float.MaxValue);
+            projectileSpeeds.Add("Kennen", 1600.0000f);
+            projectileSpeeds.Add("Nunu", 500.0000f);
+            projectileSpeeds.Add("Ryze", 2400.0000f);
+            projectileSpeeds.Add("Zed", 467.0000f);
+            projectileSpeeds.Add("Nautilus", 1000.0000f);
+            projectileSpeeds.Add("Gangplank", 1000.0000f);
+            projectileSpeeds.Add("Lux", 1600.0000f);
+            projectileSpeeds.Add("Sejuani", 500.0000f);
+            projectileSpeeds.Add("Ezreal", 2000.0000f);
+            projectileSpeeds.Add("OdinNeutralGuardian", 1800.0000f);
+            projectileSpeeds.Add("Khazix", 500.0000f);
+            projectileSpeeds.Add("Sion", float.MaxValue);
+            projectileSpeeds.Add("Aatrox", 347.79999f);
+            projectileSpeeds.Add("Hecarim", 500.0000f);
+            projectileSpeeds.Add("Pantheon", 20.0000f);
+            projectileSpeeds.Add("Shyvana", 467.0000f);
+            projectileSpeeds.Add("Zyra", 1700.0000f);
+            projectileSpeeds.Add("Karthus", 1200.0000f);
+            projectileSpeeds.Add("Rammus", float.MaxValue);
+            projectileSpeeds.Add("Zilean", 1200.0000f);
+            projectileSpeeds.Add("Chogath", 500.0000f);
+            projectileSpeeds.Add("Malzahar", 2000.0000f);
+            projectileSpeeds.Add("YorickRavenousGhoul", 347.79999f);
+            projectileSpeeds.Add("YorickSpectralGhoul", 347.79999f);
+            projectileSpeeds.Add("JinxMine", 347.79999f);
+            projectileSpeeds.Add("YorickDecayedGhoul", 347.79999f);
+            projectileSpeeds.Add("XerathArcaneBarrageLauncher", 347.79999f);
+            projectileSpeeds.Add("Odin_SOG_Order_Crystal", 347.79999f);
+            projectileSpeeds.Add("TestCube", 347.79999f);
+            projectileSpeeds.Add("ShyvanaDragon", float.MaxValue);
+            projectileSpeeds.Add("FizzBait", float.MaxValue);
+            projectileSpeeds.Add("Blue_Minion_MechMelee", float.MaxValue);
+            projectileSpeeds.Add("OdinQuestBuff", float.MaxValue);
+            projectileSpeeds.Add("TT_Buffplat_L", float.MaxValue);
+            projectileSpeeds.Add("TT_Buffplat_R", float.MaxValue);
+            projectileSpeeds.Add("KogMawDead", float.MaxValue);
+            projectileSpeeds.Add("TempMovableChar", float.MaxValue);
+            projectileSpeeds.Add("Lizard", 500.0000f);
+            projectileSpeeds.Add("GolemOdin", float.MaxValue);
+            projectileSpeeds.Add("OdinOpeningBarrier", float.MaxValue);
+            projectileSpeeds.Add("TT_ChaosTurret4", 500.0000f);
+            projectileSpeeds.Add("TT_Flytrap_A", 500.0000f);
+            projectileSpeeds.Add("TT_NWolf", float.MaxValue);
+            projectileSpeeds.Add("OdinShieldRelic", float.MaxValue);
+            projectileSpeeds.Add("LuluSquill", float.MaxValue);
+            projectileSpeeds.Add("redDragon", float.MaxValue);
+            projectileSpeeds.Add("MonkeyKingClone", float.MaxValue);
+            projectileSpeeds.Add("Odin_skeleton", float.MaxValue);
+            projectileSpeeds.Add("OdinChaosTurretShrine", 500.0000f);
+            projectileSpeeds.Add("Cassiopeia_Death", 500.0000f);
+            projectileSpeeds.Add("OdinCenterRelic", 500.0000f);
+            projectileSpeeds.Add("OdinRedSuperminion", float.MaxValue);
+            projectileSpeeds.Add("JarvanIVWall", float.MaxValue);
+            projectileSpeeds.Add("ARAMOrderNexus", float.MaxValue);
+            projectileSpeeds.Add("Red_Minion_MechCannon", 1200.0000f);
+            projectileSpeeds.Add("OdinBlueSuperminion", float.MaxValue);
+            projectileSpeeds.Add("SyndraOrbs", float.MaxValue);
+            projectileSpeeds.Add("LuluKitty", float.MaxValue);
+            projectileSpeeds.Add("SwainNoBird", float.MaxValue);
+            projectileSpeeds.Add("LuluLadybug", float.MaxValue);
+            projectileSpeeds.Add("CaitlynTrap", float.MaxValue);
+            projectileSpeeds.Add("TT_Shroom_A", float.MaxValue);
+            projectileSpeeds.Add("ARAMChaosTurretShrine", 500.0000f);
+            projectileSpeeds.Add("Odin_Windmill_Propellers", 500.0000f);
+            projectileSpeeds.Add("TT_NWolf2", float.MaxValue);
+            projectileSpeeds.Add("OdinMinionGraveyardPortal", float.MaxValue);
+            projectileSpeeds.Add("SwainBeam", float.MaxValue);
+            projectileSpeeds.Add("Summoner_Rider_Order", float.MaxValue);
+            projectileSpeeds.Add("TT_Relic", float.MaxValue);
+            projectileSpeeds.Add("odin_lifts_crystal", float.MaxValue);
+            projectileSpeeds.Add("OdinOrderTurretShrine", 500.0000f);
+            projectileSpeeds.Add("SpellBook1", 500.0000f);
+            projectileSpeeds.Add("Blue_Minion_MechCannon", 1200.0000f);
+            projectileSpeeds.Add("TT_ChaosInhibitor_D", 1200.0000f);
+            projectileSpeeds.Add("Odin_SoG_Chaos", 1200.0000f);
+            projectileSpeeds.Add("TrundleWall", 1200.0000f);
+            projectileSpeeds.Add("HA_AP_HealthRelic", 1200.0000f);
+            projectileSpeeds.Add("OrderTurretShrine", 500.0000f);
+            projectileSpeeds.Add("OriannaBall", 500.0000f);
+            projectileSpeeds.Add("ChaosTurretShrine", 500.0000f);
+            projectileSpeeds.Add("LuluCupcake", 500.0000f);
+            projectileSpeeds.Add("HA_AP_ChaosTurretShrine", 500.0000f);
+            projectileSpeeds.Add("TT_NWraith2", 750.0000f);
+            projectileSpeeds.Add("TT_Tree_A", 750.0000f);
+            projectileSpeeds.Add("SummonerBeacon", 750.0000f);
+            projectileSpeeds.Add("Odin_Drill", 750.0000f);
+            projectileSpeeds.Add("TT_NGolem", float.MaxValue);
+            projectileSpeeds.Add("AramSpeedShrine", float.MaxValue);
+            projectileSpeeds.Add("OriannaNoBall", float.MaxValue);
+            projectileSpeeds.Add("Odin_Minecart", float.MaxValue);
+            projectileSpeeds.Add("Summoner_Rider_Chaos", float.MaxValue);
+            projectileSpeeds.Add("OdinSpeedShrine", float.MaxValue);
+            projectileSpeeds.Add("TT_SpeedShrine", float.MaxValue);
+            projectileSpeeds.Add("odin_lifts_buckets", float.MaxValue);
+            projectileSpeeds.Add("OdinRockSaw", float.MaxValue);
+            projectileSpeeds.Add("OdinMinionSpawnPortal", float.MaxValue);
+            projectileSpeeds.Add("SyndraSphere", float.MaxValue);
+            projectileSpeeds.Add("Red_Minion_MechMelee", float.MaxValue);
+            projectileSpeeds.Add("SwainRaven", float.MaxValue);
+            projectileSpeeds.Add("crystal_platform", float.MaxValue);
+            projectileSpeeds.Add("MaokaiSproutling", float.MaxValue);
+            projectileSpeeds.Add("Urf", float.MaxValue);
+            projectileSpeeds.Add("TestCubeRender10Vision", float.MaxValue);
+            projectileSpeeds.Add("MalzaharVoidling", 500.0000f);
+            projectileSpeeds.Add("GhostWard", 500.0000f);
+            projectileSpeeds.Add("MonkeyKingFlying", 500.0000f);
+            projectileSpeeds.Add("LuluPig", 500.0000f);
+            projectileSpeeds.Add("AniviaIceBlock", 500.0000f);
+            projectileSpeeds.Add("TT_OrderInhibitor_D", 500.0000f);
+            projectileSpeeds.Add("Odin_SoG_Order", 500.0000f);
+            projectileSpeeds.Add("RammusDBC", 500.0000f);
+            projectileSpeeds.Add("FizzShark", 500.0000f);
+            projectileSpeeds.Add("LuluDragon", 500.0000f);
+            projectileSpeeds.Add("OdinTestCubeRender", 500.0000f);
+            projectileSpeeds.Add("TT_Tree1", 500.0000f);
+            projectileSpeeds.Add("ARAMOrderTurretShrine", 500.0000f);
+            projectileSpeeds.Add("Odin_Windmill_Gears", 500.0000f);
+            projectileSpeeds.Add("ARAMChaosNexus", 500.0000f);
+            projectileSpeeds.Add("TT_NWraith", 750.0000f);
+            projectileSpeeds.Add("TT_OrderTurret4", 500.0000f);
+            projectileSpeeds.Add("Odin_SOG_Chaos_Crystal", 500.0000f);
+            projectileSpeeds.Add("OdinQuestIndicator", 500.0000f);
+            projectileSpeeds.Add("JarvanIVStandard", 500.0000f);
+            projectileSpeeds.Add("TT_DummyPusher", 500.0000f);
+            projectileSpeeds.Add("OdinClaw", 500.0000f);
+            projectileSpeeds.Add("EliseSpiderling", 2000.0000f);
+            projectileSpeeds.Add("QuinnValor", float.MaxValue);
+            projectileSpeeds.Add("UdyrTigerUlt", float.MaxValue);
+            projectileSpeeds.Add("UdyrTurtleUlt", float.MaxValue);
+            projectileSpeeds.Add("UdyrUlt", float.MaxValue);
+            projectileSpeeds.Add("UdyrPhoenixUlt", float.MaxValue);
+            projectileSpeeds.Add("ShacoBox", 1500.0000f);
+            projectileSpeeds.Add("HA_AP_Poro", 1500.0000f);
+            projectileSpeeds.Add("AnnieTibbers", float.MaxValue);
+            projectileSpeeds.Add("UdyrPhoenix", float.MaxValue);
+            projectileSpeeds.Add("UdyrTurtle", float.MaxValue);
+            projectileSpeeds.Add("UdyrTiger", float.MaxValue);
+            projectileSpeeds.Add("HA_AP_OrderShrineTurret", 500.0000f);
+            projectileSpeeds.Add("HA_AP_Chains_Long", 500.0000f);
+            projectileSpeeds.Add("HA_AP_BridgeLaneStatue", 500.0000f);
+            projectileSpeeds.Add("HA_AP_ChaosTurretRubble", 500.0000f);
+            projectileSpeeds.Add("HA_AP_PoroSpawner", 500.0000f);
+            projectileSpeeds.Add("HA_AP_Cutaway", 500.0000f);
+            projectileSpeeds.Add("HA_AP_Chains", 500.0000f);
+            projectileSpeeds.Add("ChaosInhibitor_D", 500.0000f);
+            projectileSpeeds.Add("ZacRebirthBloblet", 500.0000f);
+            projectileSpeeds.Add("OrderInhibitor_D", 500.0000f);
+            projectileSpeeds.Add("Nidalee_Spear", 500.0000f);
+            projectileSpeeds.Add("Nidalee_Cougar", 500.0000f);
+            projectileSpeeds.Add("TT_Buffplat_Chain", 500.0000f);
+            projectileSpeeds.Add("WriggleLantern", 500.0000f);
+            projectileSpeeds.Add("TwistedLizardElder", 500.0000f);
+            projectileSpeeds.Add("RabidWolf", float.MaxValue);
+            projectileSpeeds.Add("HeimerTGreen", 1599.3999f);
+            projectileSpeeds.Add("HeimerTRed", 1599.3999f);
+            projectileSpeeds.Add("ViktorFF", 1599.3999f);
+            projectileSpeeds.Add("TwistedGolem", float.MaxValue);
+            projectileSpeeds.Add("TwistedSmallWolf", float.MaxValue);
+            projectileSpeeds.Add("TwistedGiantWolf", float.MaxValue);
+            projectileSpeeds.Add("TwistedTinyWraith", 750.0000f);
+            projectileSpeeds.Add("TwistedBlueWraith", 750.0000f);
+            projectileSpeeds.Add("TwistedYoungLizard", 750.0000f);
+            projectileSpeeds.Add("Red_Minion_Melee", float.MaxValue);
+            projectileSpeeds.Add("Blue_Minion_Melee", float.MaxValue);
+            projectileSpeeds.Add("Blue_Minion_Healer", 1000.0000f);
+            projectileSpeeds.Add("Ghast", 750.0000f);
+            projectileSpeeds.Add("blueDragon", 800.0000f);
+            projectileSpeeds.Add("Red_Minion_MechRange", 3000.0000f);
+        }
+
         private static void InitHitboxes()
         {
-            if (bHitBoxes)
-            {
-                return;
-            }
             hitboxes.Add("RecItemsCLASSIC", 65);
             hitboxes.Add("TeemoMushroom", 50);
             hitboxes.Add("TestCubeRender", 65);
@@ -1319,7 +1885,6 @@ namespace SPrediction
             hitboxes.Add("blueDragon", 100);
             hitboxes.Add("Red_Minion_MechRange", 65);
             hitboxes.Add("Test_CubeSphere", 65);
-            bHitBoxes = true;
         }
     }
 }
