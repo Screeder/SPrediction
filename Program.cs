@@ -11,8 +11,10 @@ namespace SPrediction
     public class Prediction
     {
         private static Dictionary<String, double> hitboxes = new Dictionary<String, double>();
-        private static bool bHitBoxes = false;
         private static Dictionary<String, double> projectileSpeeds = new Dictionary<String, double>();
+        private static Dictionary<String, double> dashes = new Dictionary<String, double>();
+        private static Dictionary<String, double> spells = new Dictionary<String, double>();
+        private static Dictionary<String, Blinks> blinks = new Dictionary<String, Blinks>();
 
         private static List<ActiveAttacks> activeAttacks = new List<ActiveAttacks>();
 
@@ -30,6 +32,9 @@ namespace SPrediction
         {
             InitHitboxes();
             InitProjectileSpeeds();
+            InitDashes();
+            InitSpells();
+            InitBlinks();
             //Obj_AI_Base.OnProcessSpellCast += CollisionProcessSpell; <---Activate when the requierments are fulfilled like getting totaldamage and checking everything
         }
 
@@ -124,6 +129,19 @@ namespace SPrediction
             LINE = 0,
             CIRCULAR = 1,
             CONE = 2
+        }
+
+        private class Blinks
+        {
+            public Blinks(float range, float delay, float delay2)
+            {
+                this.range = range;
+                this.delay = delay;
+                this.delay2 = delay2;
+            }
+            public float range;
+            public float delay;
+            public float delay2;
         }
 
         protected static void DebugMode()
@@ -1142,6 +1160,81 @@ namespace SPrediction
                 i = i + 1;
             }
         return unit.Health - damage;
+        }
+
+        private static void InitDashes()
+        {
+            dashes.Add("ahritumble", 0.25f);            //ahri's r
+            dashes.Add("akalishadowdance", 0.25f);      //akali r
+            dashes.Add("headbutt", 0.25f);              //alistar w
+            dashes.Add("caitlynentrapment", 0.25f);     //caitlyn e
+            dashes.Add("carpetbomb", 0.25f);            //corki w
+            dashes.Add("dianateleport", 0.25f);         //diana r
+            dashes.Add("fizzpiercingstrike", 0.25f);    //fizz q
+            dashes.Add("fizzjump", 0.25f);              //fizz e
+            dashes.Add("gragasbodyslam", 0.25f);        //gragas e
+            dashes.Add("gravesmove", 0.25f);            //graves e
+            dashes.Add("ireliagatotsu", 0.25f);         //irelia q
+            dashes.Add("jarvanivdragonstrike", 0.25f);  //jarvan q
+            dashes.Add("jaxleapstrike", 0.25f);         //jax q
+            dashes.Add("khazixe", 0.25f);               //khazix e and e evolved
+            dashes.Add("leblancslide", 0.25f);          //leblanc w
+            dashes.Add("leblancslidem", 0.25f);         //leblanc w (r)
+            dashes.Add("blindmonkqtwo", 0.25f);         //lee sin q
+            dashes.Add("blindmonkwone", 0.25f);         //lee sin w
+            dashes.Add("luciane", 0.25f);               //lucian e
+            dashes.Add("maokaiunstablegrowth", 0.25f);  //maokai w
+            dashes.Add("nocturneparanoia2", 0.25f);     //nocturne r
+            dashes.Add("pantheon_leapbash", 0.25f);     //pantheon e?
+            dashes.Add("renektonsliceanddice", 0.25f);  //renekton e                 
+            dashes.Add("riventricleave", 0.25f);        //riven q          
+            dashes.Add("rivenfeint", 0.25f);            //riven e      
+            dashes.Add("sejuaniarcticassault", 0.25f);  //sejuani q
+            dashes.Add("shenshadowdash", 0.25f);        //shen e
+            dashes.Add("shyvanatransformcast", 0.25f);  //shyvana r
+            dashes.Add("rocketjump", 0.25f);            //tristana w
+            dashes.Add("slashcast", 0.25f);             //tryndamere e
+            dashes.Add("vaynetumble", 0.25f);           //vayne q
+            dashes.Add("viq", 0.25f);                   //vi q
+            dashes.Add("monkeykingnimbus", 0.25f);      //wukong q
+            dashes.Add("xenzhaosweep", 0.25f);          //xin xhao q
+            dashes.Add("yasuodashwrapper", 0.25f);      //yasuo e
+        }
+
+        private static void InitSpells()
+        {
+            spells.Add("katarinar", 1f);                    //Katarinas R
+            spells.Add("drain", 1f);                        //Fiddle W
+            spells.Add("crowstorm", 1f);                    //Fiddle R
+            spells.Add("consume", 0.5f);                    //Nunu Q
+            spells.Add("absolutezero", 1f);                 //Nunu R
+            spells.Add("rocketgrab", 0.5f);                 //Blitzcrank Q
+            spells.Add("staticfield", 0.5f);                //Blitzcrank R
+            spells.Add("cassiopeiapetrifyinggaze", 0.5f);   //Cassio's R
+            spells.Add("ezrealtrueshotbarrage", 1f);        //Ezreal's R
+            spells.Add("galioidolofdurand", 1f);            //Galio's ?
+            spells.Add("gragasdrunkenrage", 1f);            //Gragas W
+            spells.Add("luxmalicecannon", 1f);              //Lux R
+            spells.Add("reapthewhirlwind", 1f);             //Jannas R
+            spells.Add("jinxw", 0.6f);                      //jinxW
+            spells.Add("jinxr", 0.6f);                      //jinxR
+            spells.Add("missfortunebullettime", 1f);        //MissFortuneR
+            spells.Add("shenstandunited", 1f);              //ShenR
+            spells.Add("threshe", 0.4f);                    //ThreshE
+            spells.Add("threshrpenta", 0.75f);              //ThreshR
+            spells.Add("infiniteduress", 1f);                //Warwick R
+            spells.Add("meditate", 1f);                      //yi W
+        }
+
+        private static void InitBlinks()
+        {
+            blinks.Add("ezrealarcaneshift", new Blinks(475f, 0.25f, 0.8f));             //Ezreals E
+            blinks.Add("deceive", new Blinks(400f, 0.25f, 0.8f));                       //Shacos Q
+            blinks.Add("riftwalk", new Blinks(700f, 0.25f, 0.8f));                      //KassadinR
+            blinks.Add("gate", new Blinks(5500f, 1.5f, 1.5f));                          //Twisted fate R
+            blinks.Add("katarinae", new Blinks(float.MaxValue, 0.25f, 0.8f));           //Katarinas E
+            blinks.Add("elisespideredescent", new Blinks(float.MaxValue, 0.25f, 0.8f)); //Elise E
+            blinks.Add("elisespidere", new Blinks(float.MaxValue, 0.25f, 0.8f));        //Elise insta E
         }
 
         private static void InitProjectileSpeeds()
