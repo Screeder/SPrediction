@@ -1,147 +1,99 @@
-﻿using System;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using LeagueSharp;
 using SharpDX;
 using Color = System.Drawing.Color;
 
+//Ring calc doenst work properly atm
+//Crashs somewhere without exception
+
 namespace SPrediction
 {
-
     public class Prediction
     {
-        private static Dictionary<String, double> hitboxes = new Dictionary<String, double>();
-        private static Dictionary<String, double> projectileSpeeds = new Dictionary<String, double>();
-        private static Dictionary<String, double> dashes = new Dictionary<String, double>();
-        private static Dictionary<String, double> spells = new Dictionary<String, double>();
-        private static Dictionary<String, Blinks> blinks = new Dictionary<String, Blinks>();
-
-        private static List<ActiveAttacks> activeAttacks = new List<ActiveAttacks>();
-
-        private static Vector3 castPositionDraw;
-        private static Vector3 positionDraw;
-
-        private static Vector3 positionLineDraw = new Vector3();
-        private static Vector3 positionCircularDraw = new Vector3();
-        private static Vector3 positionConeDraw = new Vector3();
-
-        static List<Obj_AI_Minion> drawMinions = new List<Obj_AI_Minion>();
-        static List<Vector3> drawMinionCircles = new List<Vector3>();
-
-        static Prediction()
-        {
-            InitHitboxes();
-            InitProjectileSpeeds();
-            InitDashes();
-            InitSpells();
-            InitBlinks();
-            //Obj_AI_Base.OnProcessSpellCast += CollisionProcessSpell; <---Activate when the requierments are fulfilled like getting totaldamage and checking everything
-        }
-
-        public class BestPrediction
-        {
-            public Vector3 castPosition;
-            public int hitChance;
-            private bool valid;
-
-            public BestPrediction()
-            {
-                this.valid = false;
-            }
-
-            public BestPrediction(Vector3 castPosition, int hitChance)
-            {
-                this.castPosition = castPosition;
-                this.hitChance = hitChance;
-                this.valid = true;
-            }
-
-            public bool IsValid()
-            {
-                return this.valid;
-            }
-        }
-
-        public class BestPredictionAOE
-        {
-            public Vector3 castPosition;
-            public int hitChance;
-            public int maxHits;
-            public List<Vector3> positions;
-            private bool valid;
-
-            public BestPredictionAOE()
-            {
-                this.valid = false;
-            }
-
-            public BestPredictionAOE(Vector3 castPosition, int hitChance, int maxHits, List<Vector3> positions)
-            {
-                this.castPosition = castPosition;
-                this.hitChance = hitChance;
-                this.maxHits = maxHits;
-                this.positions = positions;
-                this.valid = true;
-            }
-
-            public bool IsValid()
-            {
-                return this.valid;
-            }
-        }
-
-        private class ActiveAttacks
-        {
-
-            public ActiveAttacks(Obj_AI_Base attacker, Obj_AI_Base target, float startTime, float windUpTime, float hitTime, Vector3 pos, float projectileSpeed, float damage, float animationTime)
-            {
-                this.attacker = attacker;
-                this.target = target;
-                this.startTime = startTime;
-                this.windUpTime = windUpTime;
-                this.hitTime = hitTime;
-                this.pos = pos;
-                this.projectileSpeed = projectileSpeed;
-                this.damage = damage;
-                this.animationTime = animationTime;
-            }
-
-            public Obj_AI_Base attacker;
-            public Obj_AI_Base target;
-            public float startTime;
-            public float windUpTime;
-            public float hitTime;
-            public Vector3 pos;
-            public float projectileSpeed;
-            public float damage;
-            public float animationTime;
-        }
-
-
         public enum SpellType
         {
             LINE = 0,
-            CIRCULAR = 1
+            CIRCULAR = 1,
+            RING = 2
         }
 
         public enum SpellTypeAOE
         {
             LINE = 0,
             CIRCULAR = 1,
-            CONE = 2
+            CONE = 2,
+            RING = 3
         }
 
-        private class Blinks
+        private static readonly Dictionary<String, float> projectileSpeeds = new Dictionary<String, float>();
+        private static readonly Dictionary<String, float> dashes = new Dictionary<String, float>();
+        private static readonly Dictionary<String, float> spells = new Dictionary<String, float>();
+        private static readonly Dictionary<String, float> blackList = new Dictionary<String, float>();
+        private static readonly Dictionary<String, Blinks> blinks = new Dictionary<String, Blinks>();
+
+        private static readonly ConcurrentDictionary<int, float> targetsImmobile = new ConcurrentDictionary<int, float>();
+
+        private static readonly ConcurrentDictionary<int, float> targetsSlowed = new ConcurrentDictionary<int, float>();
+
+        private static readonly ConcurrentDictionary<int, Dashes> targetsDashing = new ConcurrentDictionary<int, Dashes>();
+                                                        //Partly used because OnDash missing->Maybe look in Packetfile
+
+        private static readonly ConcurrentDictionary<int, float> dontShoot = new ConcurrentDictionary<int, float>();
+        private static readonly ConcurrentDictionary<int, float> dontShoot2 = new ConcurrentDictionary<int, float>();
+
+        private static readonly List<ActiveAttacks> activeAttacks = new List<ActiveAttacks>();
+
+        private static Vector3 castPositionDraw;
+        private static Vector3 positionDraw;
+
+        private static Vector3 positionLineDraw;
+        private static Vector3 positionCircularDraw;
+        private static Vector3 positionConeDraw;
+        private static Vector3 positionRingDraw;
+        private static Vector3 positionRingDraw1;
+        private static Vector3 positionRingDraw2;
+
+        private static List<Obj_AI_Minion> drawMinions = new List<Obj_AI_Minion>();
+        private static List<Vector3> drawMinionCircles = new List<Vector3>();
+
+        static Prediction()
         {
-            public Blinks(float range, float delay, float delay2)
+            InitProjectileSpeeds();
+            InitDashes();
+            InitSpells();
+            InitBlinks();
+            InitBlackList();
+            //Obj_AI_Base.OnProcessSpellCast += CollisionProcessSpell; <---Activate when the requierments are fulfilled like getting totaldamage and checking everything
+            Obj_AI_Base.OnProcessSpellCast += OnProcessSpell;
+            Game.OnGameUpdate += Game_OnGameUpdate;
+        }
+
+        static void Game_OnGameUpdate(EventArgs args)
+        {
+            foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
-                this.range = range;
-                this.delay = delay;
-                this.delay2 = delay2;
-            }
-            public float range;
-            public float delay;
-            public float delay2;
+                BuffInstance[] buffs = hero.Buffs;
+                foreach (BuffInstance buff in buffs)
+                {
+                    if (buff.Type == BuffType.Stun || buff.Type == BuffType.Suppression || buff.Type == BuffType.Knockup || buff.Type == BuffType.Sleep || buff.Type == BuffType.Snare)
+                    {
+                        UpdateDictionaries(targetsImmobile, hero.NetworkId, buff.EndTime);
+                    }
+                    else if (buff.Type == BuffType.Slow || buff.Type == BuffType.Charm || buff.Type == BuffType.Fear || buff.Type == BuffType.Taunt)
+                    {
+                        UpdateDictionaries(targetsSlowed, hero.NetworkId, buff.EndTime);
+                    }
+
+                    if (buff.Type == BuffType.Knockback)
+                    {
+                        UpdateDictionaries(dontShoot, hero.NetworkId, Game.Time + 1);
+                    }
+                }
+            }     
         }
 
         protected static void DebugMode()
@@ -161,6 +113,9 @@ namespace SPrediction
             Drawing.DrawCircle(positionLineDraw, 200, Color.Brown);
             Drawing.DrawCircle(positionCircularDraw, 200, Color.Bisque);
             Drawing.DrawCircle(positionConeDraw, 200, Color.BlueViolet);
+            Drawing.DrawCircle(positionRingDraw, 200, Color.Gray);
+            Drawing.DrawCircle(positionRingDraw1, 200, Color.Brown);
+            Drawing.DrawCircle(positionRingDraw2, 200, Color.Bisque);
 
             int index = 0;
             foreach (Obj_AI_Minion minion in drawMinions)
@@ -175,26 +130,144 @@ namespace SPrediction
 
             foreach (Vector3 drawMinionCircle in drawMinionCircles)
             {
-                Drawing.DrawCircle((Vector3) drawMinionCircle, 100, Color.Black);
+                Drawing.DrawCircle(drawMinionCircle, 100, Color.Black);
             }
         }
 
-        private static float GetHitBox(Obj_AI_Base object1)
+        public static float GetHitBox(Obj_AI_Base object1)
         {
-            if (object1.Type == ObjectManager.Player.Type)
+            return object1.BoundingRadius;
+        }
+
+        private static void UpdateDictionaries<T>(T dictionary, object key, object value)
+        {
+            if (dictionary is ConcurrentDictionary<string, float>)
             {
-                return 0;
+                float temp;
+                ConcurrentDictionary<String, float> dic = dictionary as ConcurrentDictionary<String, float>;
+                String nKey = key as String;
+                float nValue = (float)(value as Object);
+                if (nKey != null && Utils.IsValidFloat(nValue))
+                {
+                    dic.TryRemove(nKey, out temp);
+                    dic.TryAdd(nKey, nValue);
+                }
             }
-            if (hitboxes.ContainsKey(object1.BaseSkinName))
+            else if (dictionary is ConcurrentDictionary<String, Blinks>)
             {
-                double value;
-                hitboxes.TryGetValue(object1.BaseSkinName, out value);
-                return (float) value;
+                Blinks temp;
+                ConcurrentDictionary<String, Blinks> dic = dictionary as ConcurrentDictionary<String, Blinks>;
+                String nKey = key as String;
+                Blinks nValue = value as Blinks;
+                if (nKey != null && nValue != null)
+                {
+                    dic.TryRemove(nKey, out temp);
+                    dic.TryAdd(nKey, nValue);
+                }
             }
-            else
+            else if (dictionary is ConcurrentDictionary<int, float>)
             {
-                return 65;
+                float temp;
+                ConcurrentDictionary<int, float> dic = dictionary as ConcurrentDictionary<int, float>;
+                int nKey = (int)(key as Object);
+                float nValue = (float)(value as Object);
+                if (nKey != 0 && Utils.IsValidFloat(nValue))
+                {
+                    dic.TryRemove(nKey, out temp);
+                    dic.TryAdd(nKey, nValue);
+                }
             }
+            else if (dictionary is ConcurrentDictionary<int, Dashes>)
+            {
+                Dashes temp;
+                ConcurrentDictionary<int, Dashes> dic = dictionary as ConcurrentDictionary<int, Dashes>;
+                int nKey = (int)(key as Object);
+                Dashes nValue = value as Dashes;
+                if (nKey != 0 && nValue != null)
+                {
+                    dic.TryRemove(nKey, out temp);
+                    dic.TryAdd(nKey, nValue);
+                }
+            }    
+        }
+
+        public static Object[] IsImmobile(Obj_AI_Base unit, float delay, float radius, float speed, Vector3 from,
+                                          SpellType spellType)
+        {
+            if (targetsImmobile.ContainsKey(unit.NetworkId))
+            {
+                float extraDelay = speed.CompareTo(float.MaxValue) == 0
+                                       ? 0
+                                       : (float) Utils.GetDistance(from, unit.ServerPosition)/speed;
+                float immobileTime;
+                targetsImmobile.TryGetValue(unit.NetworkId, out immobileTime);
+                if (immobileTime > (Game.Time + delay + extraDelay) && spellType == SpellType.CIRCULAR)
+                {
+                    Vector3 temp = from - unit.ServerPosition;
+                    temp.Normalize();
+                    Vector3.Multiply(temp, radius);
+                    return new Object[] {true, unit.ServerPosition, unit.ServerPosition + temp}; //Test if it's correct
+                }
+                else if (immobileTime + (radius/unit.MoveSpeed) > (Game.Time + delay + extraDelay))
+                {
+                    return new Object[] {true, unit.ServerPosition, unit.ServerPosition};
+                }
+            }
+            return new Object[] {false, unit.ServerPosition, unit.ServerPosition};
+        }
+
+        public static bool IsSlowed(Obj_AI_Base unit, float delay, float speed, Vector3 from)
+        {
+
+            if (targetsSlowed.ContainsKey(unit.NetworkId))
+            {
+                float slowTime;
+                targetsSlowed.TryGetValue(unit.NetworkId, out slowTime);
+                if (slowTime > (Game.Time + delay + Utils.GetDistance(unit.ServerPosition, from) / speed))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static Object[] IsDashing(Obj_AI_Base unit, float delay, float radius, float speed, Vector3 from)
+        {
+            bool isDashing = false;
+            bool canHit = false;
+            Vector3 newPos = new Vector3();
+            if (targetsDashing.ContainsKey(unit.NetworkId))
+            {
+                Dashes dash;              
+                targetsDashing.TryGetValue(unit.NetworkId, out dash);
+                if (dash != null && dash.endT >= Game.Time)
+                {
+                    isDashing = true;
+                    if (dash.isBlink)
+                    {
+                        if ((dash.endT - Game.Time) <= (delay + Utils.GetDistance(from, dash.endPos)/speed))
+                        {
+                            newPos = new Vector3(dash.endPos.X, dash.endPos.Y, dash.endPos.Z);
+                            canHit = (unit.MoveSpeed*
+                                      (delay + Utils.GetDistance(from, dash.endPos)/speed - (dash.endT2 - Game.Time))) <
+                                     radius;
+                        }
+
+
+                        if (((dash.endT - Game.Time) >= (delay + Utils.GetDistance(from, dash.startPos)/speed)) &&
+                            !canHit)
+                        {
+                            newPos = new Vector3(dash.startPos.X, dash.startPos.Y, dash.startPos.Z);
+                            canHit = true;
+                        }    
+                    }
+                    else
+                    {
+                        newPos = new Vector3(dash.endPos.X, dash.endPos.Y, dash.endPos.Z); // Need calcs
+                    }
+                }
+            }
+            return new Object[] { isDashing, canHit, newPos };
         }
 
         private static float MaxAngle(Obj_AI_Base unit, Vector3 currentWaypoint, Vector3 from)
@@ -207,8 +280,8 @@ namespace SPrediction
             foreach (Vector3 waypoint in waypoints)
             {
                 float angle = Utils.AngleBetween(new Vector3(0, 0, 0), CV,
-                                           new Vector3(waypoint.X, 0, waypoint.Y) -
-                                           new Vector3(unit.ServerPosition.X, 0, unit.ServerPosition.Y));
+                                                 new Vector3(waypoint.X, 0, waypoint.Y) -
+                                                 new Vector3(unit.ServerPosition.X, 0, unit.ServerPosition.Y));
                 if (angle > Max)
                     Max = angle;
             }
@@ -306,7 +379,7 @@ namespace SPrediction
         }
 
         private static Vector3 CalculateTargetPosition(Obj_AI_Base hero, float delay, float radius,
-                                                         float speed, Vector3 from)
+                                                       float speed, Vector3 from)
         {
             var castPosition = new Vector3();
             List<Vector3> waypoints = GetWaypoints(hero);
@@ -347,7 +420,7 @@ namespace SPrediction
         }
 
         private static Object[] WayPointAnalysis(Obj_AI_Base unit, float delay, float radius, float speed,
-                                                 Vector3 from, float range)
+                                                 Vector3 from, float range, SpellType spellType)
         {
             Vector3 castPosition;
             int hitChance = 1;
@@ -374,13 +447,63 @@ namespace SPrediction
             hitChance = 2; //<-----MENU ENTRY LATER
 
             if (Utils.IsValidVector3(castPosition) &&
-                (radius / unit.MoveSpeed >= delay + Utils.GetDistance(from, castPosition) / speed))
+                (radius/unit.MoveSpeed >= delay + Utils.GetDistance(from, castPosition)/speed))
                 hitChance = 3;
 
             if (
                 Utils.AngleBetween(new Vector3(from.X, from.Y, from.Z),
-                             new Vector3(unit.ServerPosition.X, unit.ServerPosition.Y, unit.ServerPosition.Z), castPosition) > 60)
+                                   new Vector3(unit.ServerPosition.X, unit.ServerPosition.Y, unit.ServerPosition.Z),
+                                   castPosition) > 60)
                 hitChance = 1;
+
+            if (dontShoot.ContainsKey(unit.NetworkId))
+            {
+                float dontShootTime;
+                dontShoot.TryGetValue(unit.NetworkId, out dontShootTime);
+                if (dontShootTime > Game.Time)
+                {
+                    hitChance = 0;
+                }
+            }
+
+            if (dontShoot2.ContainsKey(unit.NetworkId))
+            {
+                float dontShoot2Time;
+                dontShoot2.TryGetValue(unit.NetworkId, out dontShoot2Time);
+                if (dontShoot2Time > Game.Time)
+                {
+                    castPosition = unit.ServerPosition;
+                    hitChance = 1;
+                }
+            }
+
+            if (IsSlowed(unit, delay, speed, from))
+            {
+                hitChance = 2;
+            }
+
+            Object[] immobile = IsImmobile(unit, delay, radius, speed, from, spellType);
+            bool bImmobile = (bool)immobile[0];
+            if (bImmobile)
+            {
+                castPosition = (Vector3)immobile[2];
+                hitChance = 4;
+            }
+
+            Object[] dashing = IsDashing(unit, delay, radius, speed, from);
+            bool bDashing = (bool)dashing[0];
+            if (bDashing)
+            {
+                if ((bool)dashing[1])
+                {
+                    hitChance = 5;
+                }
+                else
+                {
+                    hitChance = 0;
+                }
+                castPosition = (Vector3)dashing[2];
+            }
 
             if (Utils.GetDistance(ObjectManager.Player.ServerPosition, unit.ServerPosition) < 250)
             {
@@ -395,8 +518,8 @@ namespace SPrediction
         }
 
         public static BestPrediction GetBestPosition(Obj_AI_Base unit, float delay, float radius, float speed,
-                                               Vector3 from, float range, bool collision,
-                                               SpellType spelltype)
+                                                     Vector3 from, float range, bool collision,
+                                                     SpellType spelltype)
         {
             if (unit == null || unit.IsDead || !unit.IsVisible) //Remove !unit.IsVisible later for fow calc
             {
@@ -418,25 +541,17 @@ namespace SPrediction
             {
                 radius = radius + GetHitBox(unit) - 4;
             }
-            if (Utils.IsValidFloat(speed))
-            {
-                speed = speed;
-            }
-            else
+            if (!Utils.IsValidFloat(speed))
             {
                 speed = float.MaxValue;
             }
-            if (from != null)
-            {
-                from = from;
-            }
-            else
+            if (Utils.IsValidVector3(from) == false)
             {
                 from = ObjectManager.Player.ServerPosition;
             }
 
             bool fromMyHero;
-            if (Utils.GetDistanceSqr(from, ObjectManager.Player.ServerPosition) < 50 * 50)
+            if (Utils.GetDistanceSqr(from, ObjectManager.Player.ServerPosition) < 50*50)
             {
                 fromMyHero = true;
             }
@@ -450,7 +565,7 @@ namespace SPrediction
             if (unit.Type != ObjectManager.Player.Type)
             {
                 Vector3 vec3 = CalculateTargetPosition(unit, delay, radius, speed, from);
-                if (vec3 == null)
+                if (Utils.IsValidVector3(vec3) == false)
                 {
                     return new BestPrediction();
                 }
@@ -459,7 +574,7 @@ namespace SPrediction
             }
             else
             {
-                Object[] object2 = WayPointAnalysis(unit, delay, radius, speed, from, range);
+                Object[] object2 = WayPointAnalysis(unit, delay, radius, speed, from, range, spelltype);
                 if (object2 != null)
                 {
                     castPosition = (Vector3) object2[0];
@@ -468,11 +583,39 @@ namespace SPrediction
 
                 if (fromMyHero)
                 {
-                    if (spelltype == SpellType.LINE && Utils.GetDistanceSqr(from, castPosition) >= range * range)
+                    if (spelltype == SpellType.LINE && Utils.GetDistanceSqr(from, castPosition) >= range*range)
+                    {
                         hitChance = 0;
-                    if (spelltype == SpellType.CIRCULAR &&
-                        (Utils.GetDistanceSqr(from, castPosition) >= Math.Pow(range + radius, 2)))
+                    }
+                    else if (spelltype == SpellType.CIRCULAR &&
+                             (Utils.GetDistanceSqr(from, castPosition) >= Math.Pow(range + radius, 2)))
+                    {
                         hitChance = 0;
+                    }
+                    else if (spelltype == SpellType.RING) //buggy calc
+                    {
+                        Vector3[] nVec = CalcRing(castPosition, castPosition, radius);
+                        if (Utils.GetDistance(nVec[0], from) <= range)
+                        {
+                            castPosition = nVec[0];
+                        }
+                        else if (Utils.GetDistance(nVec[1], from) <= range)
+                        {
+                            castPosition = nVec[1];
+                        }
+                        else
+                        {
+                            hitChance = 0;
+                        }
+                        //Vector3 dVector = from - castPosition;
+                        //dVector.Normalize();
+                        //dVector = Vector3.Multiply(dVector, radius);
+                        //castPosition = new Vector3(castPosition.X + dVector.X, castPosition.Y + dVector.Y, castPosition.Z + dVector.Z);
+                        //if (Utils.GetDistance(fromn, castPosition) >= range)
+                        //{
+                        //    hitChance = 0;
+                        //}
+                    }
                     else if (Utils.GetDistanceSqr(from, castPosition) > Math.Pow(range, 2))
                     {
                         hitChance = 0;
@@ -487,7 +630,8 @@ namespace SPrediction
                 pos = castPosition;
                 castPositionDraw = castPosition;
             }
-            else if (Utils.IsValidVector3(unit.Position) && Utils.GetDistance(unit.Position, from) < range && !unit.IsMoving)
+            else if (Utils.IsValidVector3(unit.Position) && Utils.GetDistance(unit.Position, from) < range &&
+                     !unit.IsMoving && spelltype != SpellType.RING)
             {
                 pos = unit.ServerPosition;
                 positionDraw = pos;
@@ -501,14 +645,17 @@ namespace SPrediction
             if (collision && hitChance > 0)
             {
                 if (CheckMinionCollision(unit, castPosition, delay, radius, speed, from, range))
+                {
                     hitChance = -1;
+                }
             }
 
             return new BestPrediction(pos, hitChance);
         }
 
-        private static bool CheckCollision(Obj_AI_Base unit, List<Obj_AI_Minion> minions, float delay, float radius, float speed,
-                                               Vector3 from, float range)
+        private static bool CheckCollision(Obj_AI_Base unit, List<Obj_AI_Minion> minions, float delay, float radius,
+                                           float speed,
+                                           Vector3 from, float range)
         {
             List<Vector3> minionCircles = new List<Vector3>();
             for (int i = 0; i < minions.Count(); i++)
@@ -545,22 +692,24 @@ namespace SPrediction
                         {
                             posHero = unit.ServerPosition;
                         }
-                        if (waypoints.Count > 1 && Utils.IsValidVector3(waypoints[0]) && Utils.IsValidVector3(waypoints[1]))
+                        if (waypoints.Count > 1 && Utils.IsValidVector3(waypoints[0]) &&
+                            Utils.IsValidVector3(waypoints[1]))
                         {
                             Object[] objects1 = Utils.VectorPointProjectionOnLineSegment(from, posHero, pos);
-                            Vector3 pointSegment1 = (Vector3)objects1[0];
-                            Vector3 pointLine1 = (Vector3)objects1[1];
-                            bool isOnSegment1 = (bool)objects1[2];
+                            Vector3 pointSegment1 = (Vector3) objects1[0];
+                            Vector3 pointLine1 = (Vector3) objects1[1];
+                            bool isOnSegment1 = (bool) objects1[2];
                             if (isOnSegment1 &&
-                                (Utils.GetDistanceSqr(pos, pointSegment1) <= Math.Pow(GetHitBox(minion) + radius + 20, 2)))
+                                (Utils.GetDistanceSqr(pos, pointSegment1) <=
+                                 Math.Pow(GetHitBox(minion) + radius + 20, 2)))
                             {
                                 return true;
                             }
                         }
                         Object[] objects = Utils.VectorPointProjectionOnLineSegment(from, posHero, pos);
-                        Vector3 pointSegment = (Vector3)objects[0];
-                        Vector3 pointLine = (Vector3)objects[1];
-                        bool isOnSegment = (bool)objects[2];
+                        Vector3 pointSegment = (Vector3) objects[0];
+                        Vector3 pointLine = (Vector3) objects[1];
+                        bool isOnSegment = (bool) objects[2];
                         if (isOnSegment &&
                             (Utils.GetDistanceSqr(pos, pointSegment) <= Math.Pow(GetHitBox(minion) + radius + 20, 2)))
                         {
@@ -574,12 +723,13 @@ namespace SPrediction
 
 
         private static bool CheckMinionCollision(Obj_AI_Base unit, Vector3 Pos, float delay, float radius, float speed,
-                                               Vector3 from, float range)
+                                                 Vector3 from, float range)
         {
             List<Obj_AI_Minion> minions = new List<Obj_AI_Minion>();
             foreach (Obj_AI_Minion minion in ObjectManager.Get<Obj_AI_Minion>())
             {
-                if (minion.Team != ObjectManager.Player.Team && Utils.GetDistance(from, minion.ServerPosition) < range + 500 * (delay + range / speed))
+                if (minion.Team != ObjectManager.Player.Team &&
+                    Utils.GetDistance(from, minion.ServerPosition) < range + 500*(delay + range/speed))
                 {
                     if (minion.IsValid)
                         minions.Add(minion);
@@ -595,9 +745,11 @@ namespace SPrediction
         }
 
         public static BestPredictionAOE GetBestAOEPosition(Obj_AI_Base unit, float delay, float radius, float speed,
-                                               Vector3 from, float range, bool collision,
-                                               SpellTypeAOE spelltype)
+                                                           Vector3 from, float range, bool collision,
+                                                           SpellTypeAOE spelltype, float width = 10)
         {
+            if (!unit.IsVisible)
+                return new BestPredictionAOE();
             BestPredictionAOE objects = new BestPredictionAOE();
             switch (spelltype)
             {
@@ -612,15 +764,139 @@ namespace SPrediction
                 case SpellTypeAOE.CONE:
                     objects = GetConeAOECastPosition(unit, delay, radius, speed, from, range, collision);
                     break;
+
+                case SpellTypeAOE.RING:
+                    objects = GetRingAOECastPosition(unit, delay, radius, speed, from, range, collision, width);
+                    break;
             }
 
             return objects;
         }
 
-        private static BestPredictionAOE GetCircularAOECastPosition(Obj_AI_Base unit, float delay, float radius, float speed,
-                                               Vector3 from, float range, bool collision)
+        private static List<PointF> Vector3ToPointF(List<Vector3> vector3s)
         {
-            BestPrediction objects1 = GetBestPosition(unit, delay, radius, speed, from, range, collision, SpellType.CIRCULAR);
+            List<PointF> pointFs = new List<PointF>();
+            foreach (Vector3 vector3 in vector3s)
+            {
+                pointFs.Add(new PointF(vector3.X, vector3.Y));
+            }
+            return pointFs;
+        }
+
+        private static List<Vector3> PointFToVector3(List<PointF> pointFs)
+        {
+            List<Vector3> vector3s = new List<Vector3>();
+            foreach (PointF pointF in pointFs)
+            {
+                vector3s.Add(new Vector3(pointF.X, pointF.Y, 0));
+            }
+            return vector3s;
+        }
+
+        private static Vector3[] CalcRing(Vector3 pos1, Vector3 pos2, float radius)
+        {
+            Vector3 centerPoint = new Vector3((pos2.X + pos1.X)/2, (pos2.Y + pos1.Y)/2,
+                                              (pos2.Z + pos1.Z)/2);
+            Vector3 perpendicular = new Vector3(pos2.X - pos1.X, pos2.Y - pos1.Y, pos2.Z - pos1.Z);
+            perpendicular.Normalize();
+            perpendicular = Utils.perpendicular(perpendicular); //maybe need change with line below
+
+            float distance = (float) Utils.GetDistance(pos2, pos1)/2;
+            float a = (float) Math.Sqrt(radius*radius - distance*distance);
+            Vector3 sPos1 = centerPoint + a*perpendicular;
+            Vector3 sPos2 = centerPoint - a*perpendicular;
+            return new[] {sPos1, sPos2};
+        }
+
+        private static BestPredictionAOE GetRingAOECastPosition(Obj_AI_Base unit, float delay, float radius, float speed,
+                                                                Vector3 from, float range, bool collision, float width)
+        {
+            if (range.CompareTo(0) != 0)
+            {
+                range = range - 4;
+            }
+            else
+            {
+                range = 20000;
+            }
+            BestPrediction objects1 = GetBestPosition(unit, delay, width, speed, from, range, collision, SpellType.RING);
+            if (objects1 == null || !objects1.IsValid())
+            {
+                return new BestPredictionAOE();
+            }
+            Vector3 mainCastPosition = objects1.castPosition;
+            int mainHitChance = objects1.hitChance;
+            List<Vector3> points = new List<Vector3>();
+            points.Add(mainCastPosition);
+            //points.Add(from);
+            foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
+            {
+                if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <=
+                    (range*1.5)*(range*1.5))
+                {
+                    BestPrediction objects2 = GetBestPosition(hero, delay, width, speed, from, range, collision,
+                                                              SpellType.RING);
+                    if (objects2 == null || !objects2.IsValid())
+                    {
+                        continue;
+                    }
+                    Vector3 castPosition2 = objects2.castPosition;
+                    int hitChance2 = objects2.hitChance;
+                    if (Utils.GetDistanceSqr(from, castPosition2) <= (range*radius))
+                    {
+                        points.Add(castPosition2);
+                        //points.Add(hero.ServerPosition);
+                    }
+                }
+            }
+
+            if (points.Count > 2)
+            {
+                points.RemoveRange(2, points.Count - 2);
+            }
+
+            if (points.Count == 2)
+            {
+                Vector3 pos1 = points[0];
+                Vector3 pos2 = points[1];
+                if (Utils.GetDistance(pos1, pos2) <= radius*2 && Utils.GetDistance(pos1, pos2).CompareTo(0) != 0)
+                {
+                    Vector3[] nVec = CalcRing(pos2, pos1, radius);
+                    Vector3 sPos1 = nVec[0];
+                    Vector3 sPos2 = nVec[1];
+                    positionRingDraw1 = sPos1;
+                    positionRingDraw2 = sPos2;
+                    if (Utils.GetDistance(sPos1, from) <= range)
+                    {
+                        positionRingDraw = sPos1;
+                        return new BestPredictionAOE(sPos1, mainHitChance, points.Count, points);
+                    }
+                    else if (Utils.GetDistance(sPos2, from) <= range)
+                    {
+                        positionRingDraw = sPos2;
+                        return new BestPredictionAOE(sPos2, mainHitChance, points.Count, points);
+                    }
+                }
+                points.RemoveAt(1);
+            }
+
+            objects1 = GetBestPosition(unit, delay, radius, speed, from, range, collision, SpellType.RING);
+            if (objects1 == null || !objects1.IsValid())
+            {
+                return new BestPredictionAOE();
+            }
+            mainCastPosition = objects1.castPosition;
+            mainHitChance = objects1.hitChance;
+            return new BestPredictionAOE(mainCastPosition, mainHitChance, points.Count, points);
+        }
+
+        private static BestPredictionAOE GetCircularAOECastPosition(Obj_AI_Base unit, float delay, float radius,
+                                                                    float speed,
+                                                                    Vector3 from, float range, bool collision)
+        {
+            BestPrediction objects1 = GetBestPosition(unit, delay, radius, speed, from, range, collision,
+                                                      SpellType.CIRCULAR);
             if (objects1 == null || !objects1.IsValid())
             {
                 return new BestPredictionAOE();
@@ -633,9 +909,11 @@ namespace SPrediction
             foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
                 if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
-                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <= (range * 1.5) * (range * 1.5))
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <=
+                    (range*1.5)*(range*1.5))
                 {
-                    BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision, SpellType.CIRCULAR);
+                    BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision,
+                                                              SpellType.CIRCULAR);
                     if (objects2 == null || !objects2.IsValid())
                     {
                         continue;
@@ -652,9 +930,9 @@ namespace SPrediction
             while (points.Count > 1)
             {
                 Object[] objects2 = Utils.ComputeMEC(points);
-                Vector3 center2 = (Vector3)objects2[0];
-                float radius2 = (float)objects2[1];
-                Vector3 radiusPoint2 = (Vector3)objects2[2];
+                Vector3 center2 = (Vector3) objects2[0];
+                float radius2 = (float) objects2[1];
+                Vector3 radiusPoint2 = (Vector3) objects2[2];
 
                 if (radius2 <= radius + GetHitBox(unit) - 8)
                 {
@@ -667,7 +945,7 @@ namespace SPrediction
 
                 for (int i = 1; i < points.Count - 1; i++)
                 {
-                    float distance = (float)Utils.GetDistanceSqr(points[i], points[0]);
+                    float distance = (float) Utils.GetDistanceSqr(points[i], points[0]);
                     if (distance > maxdist || maxdist.CompareTo(-1) == 0)
                     {
                         maxdistindex = i;
@@ -683,8 +961,9 @@ namespace SPrediction
 
         private static Vector3[] GetPossiblePoints(Vector3 from, Vector3 pos, float width, float range)
         {
-            Vector3 middlePoint = (from + pos) / 2;
-            Vector3[] vectors = Utils.CircleCircleIntersection(from, middlePoint, width, (float)Utils.GetDistance(middlePoint, from));
+            Vector3 middlePoint = (from + pos)/2;
+            Vector3[] vectors = Utils.CircleCircleIntersection(from, middlePoint, width,
+                                                               (float) Utils.GetDistance(middlePoint, from));
             Vector3 P1 = vectors[0];
             Vector3 P2 = vectors[1];
 
@@ -699,7 +978,7 @@ namespace SPrediction
             V2.Normalize();
             Vector3.Multiply(V2, range);
             V2 = V2 + from;
-            return new Vector3[]{V1, V2};
+            return new[] {V1, V2};
         }
 
         private static Object[] CountHits(Vector3 P1, Vector3 P2, float width, List<Vector3> points)
@@ -711,9 +990,9 @@ namespace SPrediction
             {
                 Vector3 point = points[i];
                 Object[] objects = Utils.VectorPointProjectionOnLineSegment(P1, P2, point);
-                Vector3 pointSegment = (Vector3)objects[0];
-                bool isOnSegment = (bool)objects[2];
-                if (isOnSegment && Utils.GetDistanceSqr(pointSegment, point) <= width * width)
+                Vector3 pointSegment = (Vector3) objects[0];
+                bool isOnSegment = (bool) objects[2];
+                if (isOnSegment && Utils.GetDistanceSqr(pointSegment, point) <= width*width)
                 {
                     hits = hits + 1;
                     nPoints.Add(point);
@@ -723,13 +1002,12 @@ namespace SPrediction
                     return new Object[] {hits, nPoints};
                 }
             }
-            return new Object[] { hits, nPoints };
+            return new Object[] {hits, nPoints};
         }
 
         private static BestPredictionAOE GetLineAOECastPosition(Obj_AI_Base unit, float delay, float radius, float speed,
-                                               Vector3 from, float range, bool collision)
+                                                                Vector3 from, float range, bool collision)
         {
-
             BestPrediction objects1 = GetBestPosition(unit, delay, radius, speed, from, range, collision, SpellType.LINE);
             if (objects1 == null || !objects1.IsValid())
             {
@@ -765,9 +1043,11 @@ namespace SPrediction
             foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
                 if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
-                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <= (range * 1.5) * (range * 1.5))
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <=
+                    (range*1.5)*(range*1.5))
                 {
-                    BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision, SpellType.LINE);
+                    BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision,
+                                                              SpellType.LINE);
                     if (objects2 == null || !objects2.IsValid())
                     {
                         continue;
@@ -777,7 +1057,6 @@ namespace SPrediction
                     if (Utils.GetDistance(from, castPosition2) < (range + radius))
                     {
                         points.Add(castPosition2);
-                        //positions.Add(new object[] { hero, hitChance2, castPosition2 });
                     }
                 }
             }
@@ -798,13 +1077,13 @@ namespace SPrediction
                     {
                         maxHitPos = C1;
                         maxHit = (int) countHits1[0];
-                        maxHitPoints = (List<Vector3>)countHits1[1];
+                        maxHitPoints = (List<Vector3>) countHits1[1];
                     }
-                    if ((int)countHits2[0] >= maxHit)
+                    if ((int) countHits2[0] >= maxHit)
                     {
                         maxHitPos = C2;
-                        maxHit = (int)countHits2[0];
-                        maxHitPoints = (List<Vector3>)countHits2[1];
+                        maxHit = (int) countHits2[0];
+                        maxHitPoints = (List<Vector3>) countHits2[1];
                     }
                 }
             }
@@ -820,14 +1099,17 @@ namespace SPrediction
                         Vector3 startP = from;
                         Vector3 endP = (maxHitPoints[i] + maxHitPoints[j])/2;
                         Object[] objects01 = Utils.VectorPointProjectionOnLineSegment(startP, endP, maxHitPoints[i]);
-                        Vector3 pointSegment01 = (Vector3)objects01[0];
-                        Vector3 pointLine01 = (Vector3)objects01[1];
-                        bool isOnSegment01 = (bool)objects01[2];
+                        Vector3 pointSegment01 = (Vector3) objects01[0];
+                        Vector3 pointLine01 = (Vector3) objects01[1];
+                        bool isOnSegment01 = (bool) objects01[2];
                         Object[] objects02 = Utils.VectorPointProjectionOnLineSegment(startP, endP, maxHitPoints[j]);
-                        Vector3 pointSegment02 = (Vector3)objects02[0];
-                        Vector3 pointLine02 = (Vector3)objects02[1];
-                        bool isOnSegment02 = (bool)objects02[2];
-                        float dist = (float)(Utils.GetDistanceSqr(maxHitPoints[i], pointLine01) + Utils.GetDistanceSqr(maxHitPoints[j], pointLine02));
+                        Vector3 pointSegment02 = (Vector3) objects02[0];
+                        Vector3 pointLine02 = (Vector3) objects02[1];
+                        bool isOnSegment02 = (bool) objects02[2];
+                        float dist =
+                            (float)
+                            (Utils.GetDistanceSqr(maxHitPoints[i], pointLine01) +
+                             Utils.GetDistanceSqr(maxHitPoints[j], pointLine02));
                         if (dist >= maxDistance)
                         {
                             maxDistance = dist;
@@ -837,7 +1119,7 @@ namespace SPrediction
                     }
                 }
                 positionLineDraw = (p1 + p2)/2;
-                return new BestPredictionAOE((p1 + p2) / 2, mainHitChance, maxHit, points);
+                return new BestPredictionAOE((p1 + p2)/2, mainHitChance, maxHit, points);
             }
             positionLineDraw = mainCastPosition;
             return new BestPredictionAOE(mainCastPosition, mainHitChance, 1, points);
@@ -856,26 +1138,26 @@ namespace SPrediction
                 {
                     result = result + 1;
                     hitpoints.Add(t);
-                } 
+                }
                 else if (i == 0)
                 {
-                    return new object[] { -1, hitpoints };
+                    return new object[] {-1, hitpoints};
                 }
             }
-            return new object[]{result, hitpoints};
+            return new object[] {result, hitpoints};
         }
 
         private static Object[] CheckHit(Vector3 position, float angle, List<Vector3> points)
         {
             Vector3 direction = new Vector3();
             Vector3.Normalize(ref position, out direction);
-            Vector3 v1 = Utils.Vector3Rotate(position, 0, -angle / 2, 0);
-            Vector3 v2 = Utils.Vector3Rotate(position, 0, angle / 2, 0);
+            Vector3 v1 = Utils.Vector3Rotate(position, 0, -angle/2, 0);
+            Vector3 v2 = Utils.Vector3Rotate(position, 0, angle/2, 0);
             return CountVectorBetween(v1, v2, points);
         }
 
         private static BestPredictionAOE GetConeAOECastPosition(Obj_AI_Base unit, float delay, float angle, float speed,
-                                               Vector3 from, float range, bool collision)
+                                                                Vector3 from, float range, bool collision)
         {
             if (range.CompareTo(0) != 0)
             {
@@ -888,7 +1170,7 @@ namespace SPrediction
             float radius = 1;
             if (!(angle < Math.PI*2))
             {
-                angle = (float)(angle*Math.PI/180);
+                angle = (float) (angle*Math.PI/180);
             }
             BestPrediction objects1 = GetBestPosition(unit, delay, radius, speed, from, range, collision, SpellType.LINE);
             if (objects1 == null || !objects1.IsValid())
@@ -902,16 +1184,18 @@ namespace SPrediction
             foreach (Obj_AI_Hero hero in ObjectManager.Get<Obj_AI_Hero>())
             {
                 if (hero.IsEnemy && hero.NetworkId != unit.NetworkId && !hero.IsDead && hero.IsValid &&
-                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <= (range * 1.5) * (range * 1.5))
+                    Utils.GetDistanceSqr(hero.ServerPosition, ObjectManager.Player.ServerPosition) <=
+                    (range*1.5)*(range*1.5))
                 {
-                    BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision, SpellType.LINE);
+                    BestPrediction objects2 = GetBestPosition(hero, delay, radius, speed, from, range, collision,
+                                                              SpellType.LINE);
                     if (objects2 == null || !objects2.IsValid())
                     {
                         continue;
                     }
                     Vector3 castPosition2 = objects2.castPosition;
                     int hitChance2 = objects2.hitChance;
-                    if (Utils.GetDistanceSqr(from, castPosition2) < (range * range))
+                    if (Utils.GetDistanceSqr(from, castPosition2) < (range*range))
                     {
                         points.Add(castPosition2);
                     }
@@ -927,15 +1211,15 @@ namespace SPrediction
                 for (int i = 0; i < points.Count; i++)
                 {
                     Vector3 point = points[i];
-                    Vector3 pos1 = Utils.Vector3Rotate(point, 0, angle / 2, 0);
-                    Vector3 pos2 = Utils.Vector3Rotate(point, 0, -angle / 2, 0);
+                    Vector3 pos1 = Utils.Vector3Rotate(point, 0, angle/2, 0);
+                    Vector3 pos2 = Utils.Vector3Rotate(point, 0, -angle/2, 0);
 
                     Object[] objects3 = CheckHit(pos1, angle, points);
                     int hits3 = (int) objects3[0];
                     List<Vector3> points3 = (List<Vector3>) objects3[1];
                     Object[] objects4 = CheckHit(pos2, angle, points);
-                    int hits4 = (int)objects4[0];
-                    List<Vector3> points4 = (List<Vector3>)objects4[1];
+                    int hits4 = (int) objects4[0];
+                    List<Vector3> points4 = (List<Vector3>) objects4[1];
 
                     if (hits3 >= maxHit)
                     {
@@ -955,7 +1239,7 @@ namespace SPrediction
             if (maxHit > 1)
             {
                 float maxangle = -1;
-                Vector3 p1 = new Vector3(); 
+                Vector3 p1 = new Vector3();
                 Vector3 p2 = new Vector3();
                 for (int i = 0; i < maxHitPoints.Count; i++)
                 {
@@ -982,13 +1266,62 @@ namespace SPrediction
             }
         }
 
+        private static void OnProcessSpell(Obj_AI_Base unit, GameObjectProcessSpellCastEventArgs spell)
+        {
+            if (unit.Type == ObjectManager.Player.Type)
+            {
+                foreach (KeyValuePair<string, float> spell1 in spells)
+                {
+                    if (spell1.Key.Contains(spell.SData.Name.ToLower()))
+                    {
+                        UpdateDictionaries(targetsImmobile, unit.NetworkId, Game.Time + spell1.Value);
+                        return;
+                    }
+                }
+
+                foreach (KeyValuePair<string, Blinks> spell1 in blinks)
+                {
+                    Vector3 landingPos = Utils.GetDistance(unit.ServerPosition, spell.End) < spell1.Value.range
+                                             ? spell.End
+                                             : unit.ServerPosition;
+                    if (spell1.Key.Contains(spell.SData.Name.ToLower()) /*&& !IsWall(spell1.End.X, spell1.End.Y, spell1.End.Z)*/)
+                        //Need IsWall
+                    {
+                        UpdateDictionaries(targetsDashing, unit.NetworkId,
+                                           new Dashes(true, spell1.Value.delay, Game.Time + spell1.Value.delay,
+                                                      spell1.Value.delay2, unit.ServerPosition, landingPos));
+                        return;
+                    }
+                }
+
+                foreach (KeyValuePair<string, float> spell1 in blackList)
+                {
+                    if (spell1.Key.Contains(spell.SData.Name.ToLower()))
+                    {
+                        UpdateDictionaries(dontShoot, unit.NetworkId, Game.Time + spell1.Value);
+                        return;
+                    }
+                }
+
+                foreach (KeyValuePair<string, float> spell1 in dashes)
+                {
+                    if (spell1.Key.Contains(spell.SData.Name.ToLower()))
+                    {
+                        UpdateDictionaries(dontShoot2, unit.NetworkId, Game.Time + spell1.Value);
+                        UpdateDictionaries(targetsDashing, unit.NetworkId, new Dashes(false, (float)Utils.GetDistance(spell.End, spell.Start) / spell.SData.MissileSpeed, Game.Time + (float)Utils.GetDistance(spell.End, spell.Start) / spell.SData.MissileSpeed, 0, spell.Start, spell.End));
+                        return;
+                    }
+                }
+            }
+        }
+
         private static float GetProjectileSpeed(Obj_AI_Base unit)
         {
-            foreach (KeyValuePair<string, double> projectileSpeed in projectileSpeeds)
+            foreach (KeyValuePair<string, float> projectileSpeed in projectileSpeeds)
             {
                 if (projectileSpeed.Key.Contains(unit.SkinName))
                 {
-                    return (float)projectileSpeed.Value;
+                    return projectileSpeed.Value;
                 }
             }
             return float.MaxValue;
@@ -1005,15 +1338,20 @@ namespace SPrediction
                     break;
                 }
             }
-            if (unit.IsValid && unit.Type != ObjectManager.Player.Type && target.IsValid && unit.Team == ObjectManager.Player.Team && (spell.SData.Name.Contains("attack") || spell.SData.Name.Contains("frostarrow")))
+            if (unit.IsValid && unit.Type != ObjectManager.Player.Type && target.IsValid &&
+                unit.Team == ObjectManager.Player.Team &&
+                (spell.SData.Name.Contains("attack") || spell.SData.Name.Contains("frostarrow")))
             {
                 if (Utils.GetDistanceSqr(unit.ServerPosition, ObjectManager.Player.ServerPosition) < 4000000)
                 {
-                    float time = Game.Time + spell.TimeTillPlayAnimation + (float)Utils.GetDistance(target.ServerPosition, unit.ServerPosition) / GetProjectileSpeed(unit) - Game.Ping / 2000;
+                    float time = Game.Time + spell.TimeTillPlayAnimation +
+                                 (float) Utils.GetDistance(target.ServerPosition, unit.ServerPosition)/
+                                 GetProjectileSpeed(unit) - Game.Ping/2000;
                     int i = 0;
                     while (i <= activeAttacks.Count())
                     {
-                        if ((activeAttacks[i].attacker.IsValid && activeAttacks[i].attacker.NetworkId == unit.NetworkId) || ((activeAttacks[i].hitTime + 3) < Game.Time))
+                        if ((activeAttacks[i].attacker.IsValid && activeAttacks[i].attacker.NetworkId == unit.NetworkId) ||
+                            ((activeAttacks[i].hitTime + 3) < Game.Time))
                         {
                             activeAttacks.RemoveAt(i);
                         }
@@ -1022,12 +1360,16 @@ namespace SPrediction
                             i = i + 1;
                         }
                     }
-                    activeAttacks.Add(new ActiveAttacks(unit, target, Game.Time - Game.Ping / 2000, spell.TimeTillPlayAnimation, time, unit.ServerPosition, GetProjectileSpeed(unit), CalcDamageOfAttack(unit, target, spell, 0), spell.AnimateCast));
+                    activeAttacks.Add(new ActiveAttacks(unit, target, Game.Time - Game.Ping/2000,
+                                                        spell.TimeTillPlayAnimation, time, unit.ServerPosition,
+                                                        GetProjectileSpeed(unit),
+                                                        CalcDamageOfAttack(unit, target, spell, 0), spell.AnimateCast));
                 }
             }
         }
 
-        private static float CalcDamageOfAttack(Obj_AI_Base source, Obj_AI_Base target, GameObjectProcessSpellCastEventArgs spell, float additionalDamage)
+        private static float CalcDamageOfAttack(Obj_AI_Base source, Obj_AI_Base target,
+                                                GameObjectProcessSpellCastEventArgs spell, float additionalDamage)
         {
             float armorPenPercent = source.PercentArmorPenetrationMod;
             float armorPen = source.FlatArmorPenetrationMod;
@@ -1040,10 +1382,10 @@ namespace SPrediction
             {
                 armorPenPercent = 1;
             }
-	        else if (source.Type == GameObjectType.obj_AI_Turret)
-	        {
-	            armorPenPercent = 0.7f;
-	        }
+            else if (source.Type == GameObjectType.obj_AI_Turret)
+            {
+                armorPenPercent = 0.7f;
+            }
 
 
             if (target.Type == GameObjectType.obj_AI_Turret)
@@ -1075,166 +1417,184 @@ namespace SPrediction
                 damageMultiplier = 0.60f*damageMultiplier;
             }
 
-	        if (source.Type == GameObjectType.obj_AI_Hero && target.Type == GameObjectType.obj_AI_Turret)
-	        {
-	            damageMultiplier = 0.95f * damageMultiplier;
-	        }
+            if (source.Type == GameObjectType.obj_AI_Hero && target.Type == GameObjectType.obj_AI_Turret)
+            {
+                damageMultiplier = 0.95f*damageMultiplier;
+            }
 
             if (source.Type == GameObjectType.obj_AI_Minion && target.Type == GameObjectType.obj_AI_Turret)
-	        {
-	            damageMultiplier = 0.475f * damageMultiplier;
-	        }
+            {
+                damageMultiplier = 0.475f*damageMultiplier;
+            }
 
-	        if (source.Type == GameObjectType.obj_AI_Turret &&
-	            (target.SkinName == "Red_Minion_MechCannon" || target.SkinName == "Blue_Minion_MechCannon"))
-	        {
-	            damageMultiplier = 0.8f * damageMultiplier;
-	        }
+            if (source.Type == GameObjectType.obj_AI_Turret &&
+                (target.SkinName == "Red_Minion_MechCannon" || target.SkinName == "Blue_Minion_MechCannon"))
+            {
+                damageMultiplier = 0.8f*damageMultiplier;
+            }
 
-	        if (source.Type == GameObjectType.obj_AI_Turret &&
-	            (target.SkinName == "Red_Minion_Wizard" || target.SkinName == "Blue_Minion_Wizard" ||
-	             target.SkinName == "Red_Minion_Basic" || target.SkinName == "Blue_Minion_Basic"))
-	        {
-	            damageMultiplier = (1 / 0.875f) * damageMultiplier;
-	        }
+            if (source.Type == GameObjectType.obj_AI_Turret &&
+                (target.SkinName == "Red_Minion_Wizard" || target.SkinName == "Blue_Minion_Wizard" ||
+                 target.SkinName == "Red_Minion_Basic" || target.SkinName == "Blue_Minion_Basic"))
+            {
+                damageMultiplier = (1/0.875f)*damageMultiplier;
+            }
 
             if (source.Type == GameObjectType.obj_AI_Turret)
             {
-                damageMultiplier = 1.05f * damageMultiplier;
+                damageMultiplier = 1.05f*damageMultiplier;
             }
 
-            return damageMultiplier/**totalDamage*/; //After TotalDamage fix return totalDamage
+            return damageMultiplier /**totalDamage*/; //After TotalDamage fix return totalDamage
         }
 
         private static Object[] GetPredictedHealth(Obj_AI_Base unit, float time, float delay)
         {
-	        float incDamage = 0;
-	        int i = 0;
+            float incDamage = 0;
+            int i = 0;
             float maxDamage = 0;
             int count = 0;
             if (delay.CompareTo(0) == 0)
             {
                 delay = 0.07f;
             }
-            while( i <= activeAttacks.Count())
+            while (i <= activeAttacks.Count())
             {
-	            if(activeAttacks[i].attacker.IsValid && !activeAttacks[i].attacker.IsDead && activeAttacks[i].target.IsValid && !activeAttacks[i].target.IsDead && activeAttacks[i].target.NetworkId == unit.NetworkId)
-	            {
-                    float hitTime = (float)(activeAttacks[i].startTime + activeAttacks[i].windUpTime + (Utils.GetDistance(activeAttacks[i].pos, unit.ServerPosition)) / activeAttacks[i].projectileSpeed + delay);
-                    if(Game.Time < hitTime - delay && hitTime < Game.Time + time)
+                if (activeAttacks[i].attacker.IsValid && !activeAttacks[i].attacker.IsDead &&
+                    activeAttacks[i].target.IsValid && !activeAttacks[i].target.IsDead &&
+                    activeAttacks[i].target.NetworkId == unit.NetworkId)
+                {
+                    float hitTime =
+                        (float)
+                        (activeAttacks[i].startTime + activeAttacks[i].windUpTime +
+                         (Utils.GetDistance(activeAttacks[i].pos, unit.ServerPosition))/activeAttacks[i].projectileSpeed +
+                         delay);
+                    if (Game.Time < hitTime - delay && hitTime < Game.Time + time)
                     {
-	                    incDamage = incDamage + activeAttacks[i].damage;
-	                    count = count + 1;
-	                    if(activeAttacks[i].damage > maxDamage)
-	                    {
-		                    maxDamage = activeAttacks[i].damage;
+                        incDamage = incDamage + activeAttacks[i].damage;
+                        count = count + 1;
+                        if (activeAttacks[i].damage > maxDamage)
+                        {
+                            maxDamage = activeAttacks[i].damage;
                         }
                     }
                 }
-            i = i + 1;
+                i = i + 1;
             }
-        return new Object[]{unit.Health - incDamage, maxDamage, count};
+            return new Object[] {unit.Health - incDamage, maxDamage, count};
         }
 
         private static float GetPredictedHealth2(Obj_AI_Base unit, float t)
         {
-	        float damage = 0; 
-	        int i = 0;
-	        while(i <= activeAttacks.Count())
+            float damage = 0;
+            int i = 0;
+            while (i <= activeAttacks.Count())
             {
-	            int n = 0;
-	            if((Game.Time - 0.1) <= activeAttacks[i].startTime + activeAttacks[i].animationTime && activeAttacks[i].target.IsValid && !activeAttacks[i].target.IsDead && activeAttacks[i].target.NetworkId == unit.NetworkId && activeAttacks[i].attacker.IsValid && !activeAttacks[i].attacker.IsDead)
-	            {
-		            float fromT = activeAttacks[i].startTime;
-		            float toT = t + Game.Time;
-		            while(fromT < toT)
-		            {
-			            if(fromT >= Game.Time && (fromT + (activeAttacks[i].windUpTime + Utils.GetDistance(unit.ServerPosition, activeAttacks[i].pos) / activeAttacks[i].projectileSpeed)) < toT)
-			            {
-				            n = n + 1;
-			            }
-			            fromT = fromT + activeAttacks[i].animationTime;
-		            }
-	            }
-                damage = damage + n * activeAttacks[i].damage;
+                int n = 0;
+                if ((Game.Time - 0.1) <= activeAttacks[i].startTime + activeAttacks[i].animationTime &&
+                    activeAttacks[i].target.IsValid && !activeAttacks[i].target.IsDead &&
+                    activeAttacks[i].target.NetworkId == unit.NetworkId && activeAttacks[i].attacker.IsValid &&
+                    !activeAttacks[i].attacker.IsDead)
+                {
+                    float fromT = activeAttacks[i].startTime;
+                    float toT = t + Game.Time;
+                    while (fromT < toT)
+                    {
+                        if (fromT >= Game.Time &&
+                            (fromT +
+                             (activeAttacks[i].windUpTime +
+                              Utils.GetDistance(unit.ServerPosition, activeAttacks[i].pos)/
+                              activeAttacks[i].projectileSpeed)) < toT)
+                        {
+                            n = n + 1;
+                        }
+                        fromT = fromT + activeAttacks[i].animationTime;
+                    }
+                }
+                damage = damage + n*activeAttacks[i].damage;
                 i = i + 1;
             }
-        return unit.Health - damage;
+            return unit.Health - damage;
+        }
+
+        private static void InitBlackList()
+        {
+            blackList.Add("aatroxq", 0.75f);
         }
 
         private static void InitDashes()
         {
-            dashes.Add("ahritumble", 0.25f);            //ahri's r
-            dashes.Add("akalishadowdance", 0.25f);      //akali r
-            dashes.Add("headbutt", 0.25f);              //alistar w
-            dashes.Add("caitlynentrapment", 0.25f);     //caitlyn e
-            dashes.Add("carpetbomb", 0.25f);            //corki w
-            dashes.Add("dianateleport", 0.25f);         //diana r
-            dashes.Add("fizzpiercingstrike", 0.25f);    //fizz q
-            dashes.Add("fizzjump", 0.25f);              //fizz e
-            dashes.Add("gragasbodyslam", 0.25f);        //gragas e
-            dashes.Add("gravesmove", 0.25f);            //graves e
-            dashes.Add("ireliagatotsu", 0.25f);         //irelia q
-            dashes.Add("jarvanivdragonstrike", 0.25f);  //jarvan q
-            dashes.Add("jaxleapstrike", 0.25f);         //jax q
-            dashes.Add("khazixe", 0.25f);               //khazix e and e evolved
-            dashes.Add("leblancslide", 0.25f);          //leblanc w
-            dashes.Add("leblancslidem", 0.25f);         //leblanc w (r)
-            dashes.Add("blindmonkqtwo", 0.25f);         //lee sin q
-            dashes.Add("blindmonkwone", 0.25f);         //lee sin w
-            dashes.Add("luciane", 0.25f);               //lucian e
-            dashes.Add("maokaiunstablegrowth", 0.25f);  //maokai w
-            dashes.Add("nocturneparanoia2", 0.25f);     //nocturne r
-            dashes.Add("pantheon_leapbash", 0.25f);     //pantheon e?
-            dashes.Add("renektonsliceanddice", 0.25f);  //renekton e                 
-            dashes.Add("riventricleave", 0.25f);        //riven q          
-            dashes.Add("rivenfeint", 0.25f);            //riven e      
-            dashes.Add("sejuaniarcticassault", 0.25f);  //sejuani q
-            dashes.Add("shenshadowdash", 0.25f);        //shen e
-            dashes.Add("shyvanatransformcast", 0.25f);  //shyvana r
-            dashes.Add("rocketjump", 0.25f);            //tristana w
-            dashes.Add("slashcast", 0.25f);             //tryndamere e
-            dashes.Add("vaynetumble", 0.25f);           //vayne q
-            dashes.Add("viq", 0.25f);                   //vi q
-            dashes.Add("monkeykingnimbus", 0.25f);      //wukong q
-            dashes.Add("xenzhaosweep", 0.25f);          //xin xhao q
-            dashes.Add("yasuodashwrapper", 0.25f);      //yasuo e
+            dashes.Add("ahritumble", 0.25f); //ahri's r
+            dashes.Add("akalishadowdance", 0.25f); //akali r
+            dashes.Add("headbutt", 0.25f); //alistar w
+            dashes.Add("caitlynentrapment", 0.25f); //caitlyn e
+            dashes.Add("carpetbomb", 0.25f); //corki w
+            dashes.Add("dianateleport", 0.25f); //diana r
+            dashes.Add("fizzpiercingstrike", 0.25f); //fizz q
+            dashes.Add("fizzjump", 0.25f); //fizz e
+            dashes.Add("gragasbodyslam", 0.25f); //gragas e
+            dashes.Add("gravesmove", 0.25f); //graves e
+            dashes.Add("ireliagatotsu", 0.25f); //irelia q
+            dashes.Add("jarvanivdragonstrike", 0.25f); //jarvan q
+            dashes.Add("jaxleapstrike", 0.25f); //jax q
+            dashes.Add("khazixe", 0.25f); //khazix e and e evolved
+            dashes.Add("leblancslide", 0.25f); //leblanc w
+            dashes.Add("leblancslidem", 0.25f); //leblanc w (r)
+            dashes.Add("blindmonkqtwo", 0.25f); //lee sin q
+            dashes.Add("blindmonkwone", 0.25f); //lee sin w
+            dashes.Add("luciane", 0.25f); //lucian e
+            dashes.Add("maokaiunstablegrowth", 0.25f); //maokai w
+            dashes.Add("nocturneparanoia2", 0.25f); //nocturne r
+            dashes.Add("pantheon_leapbash", 0.25f); //pantheon e?
+            dashes.Add("renektonsliceanddice", 0.25f); //renekton e                 
+            dashes.Add("riventricleave", 0.25f); //riven q          
+            dashes.Add("rivenfeint", 0.25f); //riven e      
+            dashes.Add("sejuaniarcticassault", 0.25f); //sejuani q
+            dashes.Add("shenshadowdash", 0.25f); //shen e
+            dashes.Add("shyvanatransformcast", 0.25f); //shyvana r
+            dashes.Add("rocketjump", 0.25f); //tristana w
+            dashes.Add("slashcast", 0.25f); //tryndamere e
+            dashes.Add("vaynetumble", 0.25f); //vayne q
+            dashes.Add("viq", 0.25f); //vi q
+            dashes.Add("monkeykingnimbus", 0.25f); //wukong q
+            dashes.Add("xenzhaosweep", 0.25f); //xin xhao q
+            dashes.Add("yasuodashwrapper", 0.25f); //yasuo e
         }
 
         private static void InitSpells()
         {
-            spells.Add("katarinar", 1f);                    //Katarinas R
-            spells.Add("drain", 1f);                        //Fiddle W
-            spells.Add("crowstorm", 1f);                    //Fiddle R
-            spells.Add("consume", 0.5f);                    //Nunu Q
-            spells.Add("absolutezero", 1f);                 //Nunu R
-            spells.Add("rocketgrab", 0.5f);                 //Blitzcrank Q
-            spells.Add("staticfield", 0.5f);                //Blitzcrank R
-            spells.Add("cassiopeiapetrifyinggaze", 0.5f);   //Cassio's R
-            spells.Add("ezrealtrueshotbarrage", 1f);        //Ezreal's R
-            spells.Add("galioidolofdurand", 1f);            //Galio's ?
-            spells.Add("gragasdrunkenrage", 1f);            //Gragas W
-            spells.Add("luxmalicecannon", 1f);              //Lux R
-            spells.Add("reapthewhirlwind", 1f);             //Jannas R
-            spells.Add("jinxw", 0.6f);                      //jinxW
-            spells.Add("jinxr", 0.6f);                      //jinxR
-            spells.Add("missfortunebullettime", 1f);        //MissFortuneR
-            spells.Add("shenstandunited", 1f);              //ShenR
-            spells.Add("threshe", 0.4f);                    //ThreshE
-            spells.Add("threshrpenta", 0.75f);              //ThreshR
-            spells.Add("infiniteduress", 1f);                //Warwick R
-            spells.Add("meditate", 1f);                      //yi W
+            spells.Add("katarinar", 1f); //Katarinas R
+            spells.Add("drain", 1f); //Fiddle W
+            spells.Add("crowstorm", 1f); //Fiddle R
+            spells.Add("consume", 0.5f); //Nunu Q
+            spells.Add("absolutezero", 1f); //Nunu R
+            spells.Add("rocketgrab", 0.5f); //Blitzcrank Q
+            spells.Add("staticfield", 0.5f); //Blitzcrank R
+            spells.Add("cassiopeiapetrifyinggaze", 0.5f); //Cassio's R
+            spells.Add("ezrealtrueshotbarrage", 1f); //Ezreal's R
+            spells.Add("galioidolofdurand", 1f); //Galio's ?
+            spells.Add("gragasdrunkenrage", 1f); //Gragas W
+            spells.Add("luxmalicecannon", 1f); //Lux R
+            spells.Add("reapthewhirlwind", 1f); //Jannas R
+            spells.Add("jinxw", 0.6f); //jinxW
+            spells.Add("jinxr", 0.6f); //jinxR
+            spells.Add("missfortunebullettime", 1f); //MissFortuneR
+            spells.Add("shenstandunited", 1f); //ShenR
+            spells.Add("threshe", 0.4f); //ThreshE
+            spells.Add("threshrpenta", 0.75f); //ThreshR
+            spells.Add("infiniteduress", 1f); //Warwick R
+            spells.Add("meditate", 1f); //yi W
         }
 
         private static void InitBlinks()
         {
-            blinks.Add("ezrealarcaneshift", new Blinks(475f, 0.25f, 0.8f));             //Ezreals E
-            blinks.Add("deceive", new Blinks(400f, 0.25f, 0.8f));                       //Shacos Q
-            blinks.Add("riftwalk", new Blinks(700f, 0.25f, 0.8f));                      //KassadinR
-            blinks.Add("gate", new Blinks(5500f, 1.5f, 1.5f));                          //Twisted fate R
-            blinks.Add("katarinae", new Blinks(float.MaxValue, 0.25f, 0.8f));           //Katarinas E
+            blinks.Add("ezrealarcaneshift", new Blinks(475f, 0.25f, 0.8f)); //Ezreals E
+            blinks.Add("deceive", new Blinks(400f, 0.25f, 0.8f)); //Shacos Q
+            blinks.Add("riftwalk", new Blinks(700f, 0.25f, 0.8f)); //KassadinR
+            blinks.Add("gate", new Blinks(5500f, 1.5f, 1.5f)); //Twisted fate R
+            blinks.Add("katarinae", new Blinks(float.MaxValue, 0.25f, 0.8f)); //Katarinas E
             blinks.Add("elisespideredescent", new Blinks(float.MaxValue, 0.25f, 0.8f)); //Elise E
-            blinks.Add("elisespidere", new Blinks(float.MaxValue, 0.25f, 0.8f));        //Elise insta E
+            blinks.Add("elisespidere", new Blinks(float.MaxValue, 0.25f, 0.8f)); //Elise insta E
         }
 
         private static void InitProjectileSpeeds()
@@ -1589,395 +1949,117 @@ namespace SPrediction
             projectileSpeeds.Add("Red_Minion_MechRange", 3000.0000f);
         }
 
-        private static void InitHitboxes()
+        private class ActiveAttacks
         {
-            hitboxes.Add("RecItemsCLASSIC", 65);
-            hitboxes.Add("TeemoMushroom", 50);
-            hitboxes.Add("TestCubeRender", 65);
-            hitboxes.Add("Xerath", 65);
-            hitboxes.Add("Kassadin", 65);
-            hitboxes.Add("Rengar", 65);
-            hitboxes.Add("Thresh", 55);
-            hitboxes.Add("RecItemsTUTORIAL", 65);
-            hitboxes.Add("Ziggs", 55);
-            hitboxes.Add("ZyraPassive", 20);
-            hitboxes.Add("ZyraThornPlant", 20);
-            hitboxes.Add("KogMaw", 65);
-            hitboxes.Add("HeimerTBlue", 35);
-            hitboxes.Add("EliseSpider", 65);
-            hitboxes.Add("Skarner", 80);
-            hitboxes.Add("ChaosNexus", 65);
-            hitboxes.Add("Katarina", 65);
-            hitboxes.Add("Riven", 65);
-            hitboxes.Add("SightWard", 1);
-            hitboxes.Add("HeimerTYellow", 35);
-            hitboxes.Add("Ashe", 65);
-            hitboxes.Add("VisionWard", 1);
-            hitboxes.Add("TT_NGolem2", 80);
-            hitboxes.Add("ThreshLantern", 65);
-            hitboxes.Add("RecItemsCLASSICMap10", 65);
-            hitboxes.Add("RecItemsODIN", 65);
-            hitboxes.Add("TT_Spiderboss", 200);
-            hitboxes.Add("RecItemsARAM", 65);
-            hitboxes.Add("OrderNexus", 65);
-            hitboxes.Add("Soraka", 65);
-            hitboxes.Add("Jinx", 65);
-            hitboxes.Add("TestCubeRenderwCollision", 65);
-            hitboxes.Add("Red_Minion_Wizard", 48);
-            hitboxes.Add("JarvanIV", 65);
-            hitboxes.Add("Blue_Minion_Wizard", 48);
-            hitboxes.Add("TT_ChaosTurret2", 88.4);
-            hitboxes.Add("TT_ChaosTurret3", 88.4);
-            hitboxes.Add("TT_ChaosTurret1", 88.4);
-            hitboxes.Add("ChaosTurretGiant", 88.4);
-            hitboxes.Add("Dragon", 100);
-            hitboxes.Add("LuluSnowman", 50);
-            hitboxes.Add("Worm", 100);
-            hitboxes.Add("ChaosTurretWorm", 88.4);
-            hitboxes.Add("TT_ChaosInhibitor", 65);
-            hitboxes.Add("ChaosTurretNormal", 88.4);
-            hitboxes.Add("AncientGolem", 100);
-            hitboxes.Add("ZyraGraspingPlant", 20);
-            hitboxes.Add("HA_AP_OrderTurret3", 88.4);
-            hitboxes.Add("HA_AP_OrderTurret2", 88.4);
-            hitboxes.Add("Tryndamere", 65);
-            hitboxes.Add("OrderTurretNormal2", 88.4);
-            hitboxes.Add("Singed", 65);
-            hitboxes.Add("OrderInhibitor", 65);
-            hitboxes.Add("Diana", 65);
-            hitboxes.Add("HA_FB_HealthRelic", 65);
-            hitboxes.Add("TT_OrderInhibitor", 65);
-            hitboxes.Add("GreatWraith", 80);
-            hitboxes.Add("Yasuo", 65);
-            hitboxes.Add("OrderTurretDragon", 88.4);
-            hitboxes.Add("OrderTurretNormal", 88.4);
-            hitboxes.Add("LizardElder", 65);
-            hitboxes.Add("HA_AP_ChaosTurret", 88.4);
-            hitboxes.Add("Ahri", 65);
-            hitboxes.Add("Lulu", 65);
-            hitboxes.Add("ChaosInhibitor", 65);
-            hitboxes.Add("HA_AP_ChaosTurret3", 88.4);
-            hitboxes.Add("HA_AP_ChaosTurret2", 88.4);
-            hitboxes.Add("ChaosTurretWorm2", 88.4);
-            hitboxes.Add("TT_OrderTurret1", 88.4);
-            hitboxes.Add("TT_OrderTurret2", 88.4);
-            hitboxes.Add("TT_OrderTurret3", 88.4);
-            hitboxes.Add("LuluFaerie", 65);
-            hitboxes.Add("HA_AP_OrderTurret", 88.4);
-            hitboxes.Add("OrderTurretAngel", 88.4);
-            hitboxes.Add("YellowTrinketUpgrade", 1);
-            hitboxes.Add("MasterYi", 65);
-            hitboxes.Add("Lissandra", 65);
-            hitboxes.Add("ARAMOrderTurretNexus", 88.4);
-            hitboxes.Add("Draven", 65);
-            hitboxes.Add("FiddleSticks", 65);
-            hitboxes.Add("SmallGolem", 80);
-            hitboxes.Add("ARAMOrderTurretFront", 88.4);
-            hitboxes.Add("ChaosTurretTutorial", 88.4);
-            hitboxes.Add("NasusUlt", 80);
-            hitboxes.Add("Maokai", 80);
-            hitboxes.Add("Wraith", 50);
-            hitboxes.Add("Wolf", 50);
-            hitboxes.Add("Sivir", 65);
-            hitboxes.Add("Corki", 65);
-            hitboxes.Add("Janna", 65);
-            hitboxes.Add("Nasus", 80);
-            hitboxes.Add("Golem", 80);
-            hitboxes.Add("ARAMChaosTurretFront", 88.4);
-            hitboxes.Add("ARAMOrderTurretInhib", 88.4);
-            hitboxes.Add("LeeSin", 65);
-            hitboxes.Add("HA_AP_ChaosTurretTutorial", 88.4);
-            hitboxes.Add("GiantWolf", 65);
-            hitboxes.Add("HA_AP_OrderTurretTutorial", 88.4);
-            hitboxes.Add("YoungLizard", 50);
-            hitboxes.Add("Jax", 65);
-            hitboxes.Add("LesserWraith", 50);
-            hitboxes.Add("Blitzcrank", 80);
-            hitboxes.Add("brush_D_SR", 65);
-            hitboxes.Add("brush_E_SR", 65);
-            hitboxes.Add("brush_F_SR", 65);
-            hitboxes.Add("brush_C_SR", 65);
-            hitboxes.Add("brush_A_SR", 65);
-            hitboxes.Add("brush_B_SR", 65);
-            hitboxes.Add("ARAMChaosTurretInhib", 88.4);
-            hitboxes.Add("Shen", 65);
-            hitboxes.Add("Nocturne", 65);
-            hitboxes.Add("Sona", 65);
-            hitboxes.Add("ARAMChaosTurretNexus", 88.4);
-            hitboxes.Add("YellowTrinket", 1);
-            hitboxes.Add("OrderTurretTutorial", 88.4);
-            hitboxes.Add("Caitlyn", 65);
-            hitboxes.Add("Trundle", 65);
-            hitboxes.Add("Malphite", 80);
-            hitboxes.Add("Mordekaiser", 80);
-            hitboxes.Add("ZyraSeed", 65);
-            hitboxes.Add("Vi", 50);
-            hitboxes.Add("Tutorial_Red_Minion_Wizard", 48);
-            hitboxes.Add("Renekton", 80);
-            hitboxes.Add("Anivia", 65);
-            hitboxes.Add("Fizz", 65);
-            hitboxes.Add("Heimerdinger", 55);
-            hitboxes.Add("Evelynn", 65);
-            hitboxes.Add("Rumble", 80);
-            hitboxes.Add("Leblanc", 65);
-            hitboxes.Add("Darius", 80);
-            hitboxes.Add("OlafAxe", 50);
-            hitboxes.Add("Viktor", 65);
-            hitboxes.Add("XinZhao", 65);
-            hitboxes.Add("Orianna", 65);
-            hitboxes.Add("Vladimir", 65);
-            hitboxes.Add("Nidalee", 65);
-            hitboxes.Add("Tutorial_Red_Minion_Basic", 48);
-            hitboxes.Add("ZedShadow", 65);
-            hitboxes.Add("Syndra", 65);
-            hitboxes.Add("Zac", 80);
-            hitboxes.Add("Olaf", 65);
-            hitboxes.Add("Veigar", 55);
-            hitboxes.Add("Twitch", 65);
-            hitboxes.Add("Alistar", 80);
-            hitboxes.Add("Akali", 65);
-            hitboxes.Add("Urgot", 80);
-            hitboxes.Add("Leona", 65);
-            hitboxes.Add("Talon", 65);
-            hitboxes.Add("Karma", 65);
-            hitboxes.Add("Jayce", 65);
-            hitboxes.Add("Galio", 80);
-            hitboxes.Add("Shaco", 65);
-            hitboxes.Add("Taric", 65);
-            hitboxes.Add("TwistedFate", 65);
-            hitboxes.Add("Varus", 65);
-            hitboxes.Add("Garen", 65);
-            hitboxes.Add("Swain", 65);
-            hitboxes.Add("Vayne", 65);
-            hitboxes.Add("Fiora", 65);
-            hitboxes.Add("Quinn", 65);
-            hitboxes.Add("Kayle", 65);
-            hitboxes.Add("Blue_Minion_Basic", 48);
-            hitboxes.Add("Brand", 65);
-            hitboxes.Add("Teemo", 55);
-            hitboxes.Add("Amumu", 55);
-            hitboxes.Add("Annie", 55);
-            hitboxes.Add("Odin_Blue_Minion_caster", 48);
-            hitboxes.Add("Elise", 65);
-            hitboxes.Add("Nami", 65);
-            hitboxes.Add("Poppy", 55);
-            hitboxes.Add("AniviaEgg", 65);
-            hitboxes.Add("Tristana", 55);
-            hitboxes.Add("Graves", 65);
-            hitboxes.Add("Morgana", 65);
-            hitboxes.Add("Gragas", 80);
-            hitboxes.Add("MissFortune", 65);
-            hitboxes.Add("Warwick", 65);
-            hitboxes.Add("Cassiopeia", 65);
-            hitboxes.Add("Tutorial_Blue_Minion_Wizard", 48);
-            hitboxes.Add("DrMundo", 80);
-            hitboxes.Add("Volibear", 80);
-            hitboxes.Add("Irelia", 65);
-            hitboxes.Add("Odin_Red_Minion_Caster", 48);
-            hitboxes.Add("Lucian", 65);
-            hitboxes.Add("Yorick", 80);
-            hitboxes.Add("RammusPB", 65);
-            hitboxes.Add("Red_Minion_Basic", 48);
-            hitboxes.Add("Udyr", 65);
-            hitboxes.Add("MonkeyKing", 65);
-            hitboxes.Add("Tutorial_Blue_Minion_Basic", 48);
-            hitboxes.Add("Kennen", 55);
-            hitboxes.Add("Nunu", 65);
-            hitboxes.Add("Ryze", 65);
-            hitboxes.Add("Zed", 65);
-            hitboxes.Add("Nautilus", 80);
-            hitboxes.Add("Gangplank", 65);
-            hitboxes.Add("shopevo", 65);
-            hitboxes.Add("Lux", 65);
-            hitboxes.Add("Sejuani", 80);
-            hitboxes.Add("Ezreal", 65);
-            hitboxes.Add("OdinNeutralGuardian", 65);
-            hitboxes.Add("Khazix", 65);
-            hitboxes.Add("Sion", 80);
-            hitboxes.Add("Aatrox", 65);
-            hitboxes.Add("Hecarim", 80);
-            hitboxes.Add("Pantheon", 65);
-            hitboxes.Add("Shyvana", 50);
-            hitboxes.Add("Zyra", 65);
-            hitboxes.Add("Karthus", 65);
-            hitboxes.Add("Rammus", 65);
-            hitboxes.Add("Zilean", 65);
-            hitboxes.Add("Chogath", 80);
-            hitboxes.Add("Malzahar", 65);
-            hitboxes.Add("YorickRavenousGhoul", 1);
-            hitboxes.Add("YorickSpectralGhoul", 1);
-            hitboxes.Add("JinxMine", 65);
-            hitboxes.Add("YorickDecayedGhoul", 1);
-            hitboxes.Add("XerathArcaneBarrageLauncher", 65);
-            hitboxes.Add("Odin_SOG_Order_Crystal", 65);
-            hitboxes.Add("TestCube", 65);
-            hitboxes.Add("ShyvanaDragon", 80);
-            hitboxes.Add("FizzBait", 65);
-            hitboxes.Add("ShopKeeper", 65);
-            hitboxes.Add("Blue_Minion_MechMelee", 65);
-            hitboxes.Add("OdinQuestBuff", 65);
-            hitboxes.Add("TT_Buffplat_L", 65);
-            hitboxes.Add("TT_Buffplat_R", 65);
-            hitboxes.Add("KogMawDead", 65);
-            hitboxes.Add("TempMovableChar", 48);
-            hitboxes.Add("Lizard", 50);
-            hitboxes.Add("GolemOdin", 80);
-            hitboxes.Add("OdinOpeningBarrier", 65);
-            hitboxes.Add("TT_ChaosTurret4", 88.4);
-            hitboxes.Add("TT_Flytrap_A", 65);
-            hitboxes.Add("TT_Chains_Order_Periph", 65);
-            hitboxes.Add("TT_NWolf", 65);
-            hitboxes.Add("ShopMale", 65);
-            hitboxes.Add("OdinShieldRelic", 65);
-            hitboxes.Add("TT_Chains_Xaos_Base", 65);
-            hitboxes.Add("LuluSquill", 50);
-            hitboxes.Add("TT_Shopkeeper", 65);
-            hitboxes.Add("redDragon", 100);
-            hitboxes.Add("MonkeyKingClone", 65);
-            hitboxes.Add("Odin_skeleton", 65);
-            hitboxes.Add("OdinChaosTurretShrine", 88.4);
-            hitboxes.Add("Cassiopeia_Death", 65);
-            hitboxes.Add("OdinCenterRelic", 48);
-            hitboxes.Add("Ezreal_cyber_1", 65);
-            hitboxes.Add("Ezreal_cyber_3", 65);
-            hitboxes.Add("Ezreal_cyber_2", 65);
-            hitboxes.Add("OdinRedSuperminion", 55);
-            hitboxes.Add("TT_Speedshrine_Gears", 65);
-            hitboxes.Add("JarvanIVWall", 65);
-            hitboxes.Add("DestroyedNexus", 65);
-            hitboxes.Add("ARAMOrderNexus", 65);
-            hitboxes.Add("Red_Minion_MechCannon", 65);
-            hitboxes.Add("OdinBlueSuperminion", 55);
-            hitboxes.Add("SyndraOrbs", 65);
-            hitboxes.Add("LuluKitty", 50);
-            hitboxes.Add("SwainNoBird", 65);
-            hitboxes.Add("LuluLadybug", 50);
-            hitboxes.Add("CaitlynTrap", 65);
-            hitboxes.Add("TT_Shroom_A", 65);
-            hitboxes.Add("ARAMChaosTurretShrine", 88.4);
-            hitboxes.Add("Odin_Windmill_Propellers", 65);
-            hitboxes.Add("DestroyedInhibitor", 65);
-            hitboxes.Add("TT_NWolf2", 50);
-            hitboxes.Add("OdinMinionGraveyardPortal", 1);
-            hitboxes.Add("SwainBeam", 65);
-            hitboxes.Add("Summoner_Rider_Order", 65);
-            hitboxes.Add("TT_Relic", 65);
-            hitboxes.Add("odin_lifts_crystal", 65);
-            hitboxes.Add("OdinOrderTurretShrine", 88.4);
-            hitboxes.Add("SpellBook1", 65);
-            hitboxes.Add("Blue_Minion_MechCannon", 65);
-            hitboxes.Add("TT_ChaosInhibitor_D", 65);
-            hitboxes.Add("Odin_SoG_Chaos", 65);
-            hitboxes.Add("TrundleWall", 65);
-            hitboxes.Add("HA_AP_HealthRelic", 65);
-            hitboxes.Add("OrderTurretShrine", 88.4);
-            hitboxes.Add("OriannaBall", 48);
-            hitboxes.Add("ChaosTurretShrine", 88.4);
-            hitboxes.Add("LuluCupcake", 50);
-            hitboxes.Add("HA_AP_ChaosTurretShrine", 88.4);
-            hitboxes.Add("TT_Chains_Bot_Lane", 65);
-            hitboxes.Add("TT_NWraith2", 50);
-            hitboxes.Add("TT_Tree_A", 65);
-            hitboxes.Add("SummonerBeacon", 65);
-            hitboxes.Add("Odin_Drill", 65);
-            hitboxes.Add("TT_NGolem", 80);
-            hitboxes.Add("Shop", 65);
-            hitboxes.Add("AramSpeedShrine", 65);
-            hitboxes.Add("DestroyedTower", 65);
-            hitboxes.Add("OriannaNoBall", 65);
-            hitboxes.Add("Odin_Minecart", 65);
-            hitboxes.Add("Summoner_Rider_Chaos", 65);
-            hitboxes.Add("OdinSpeedShrine", 65);
-            hitboxes.Add("TT_Brazier", 65);
-            hitboxes.Add("TT_SpeedShrine", 65);
-            hitboxes.Add("odin_lifts_buckets", 65);
-            hitboxes.Add("OdinRockSaw", 65);
-            hitboxes.Add("OdinMinionSpawnPortal", 1);
-            hitboxes.Add("SyndraSphere", 48);
-            hitboxes.Add("TT_Nexus_Gears", 65);
-            hitboxes.Add("Red_Minion_MechMelee", 65);
-            hitboxes.Add("SwainRaven", 65);
-            hitboxes.Add("crystal_platform", 65);
-            hitboxes.Add("MaokaiSproutling", 48);
-            hitboxes.Add("Urf", 65);
-            hitboxes.Add("TestCubeRender10Vision", 65);
-            hitboxes.Add("MalzaharVoidling", 10);
-            hitboxes.Add("GhostWard", 1);
-            hitboxes.Add("MonkeyKingFlying", 65);
-            hitboxes.Add("LuluPig", 50);
-            hitboxes.Add("AniviaIceBlock", 65);
-            hitboxes.Add("TT_OrderInhibitor_D", 65);
-            hitboxes.Add("yonkey", 65);
-            hitboxes.Add("Odin_SoG_Order", 65);
-            hitboxes.Add("RammusDBC", 65);
-            hitboxes.Add("FizzShark", 65);
-            hitboxes.Add("LuluDragon", 50);
-            hitboxes.Add("OdinTestCubeRender", 65);
-            hitboxes.Add("OdinCrane", 65);
-            hitboxes.Add("TT_Tree1", 65);
-            hitboxes.Add("ARAMOrderTurretShrine", 88.4);
-            hitboxes.Add("TT_Chains_Order_Base", 65);
-            hitboxes.Add("Odin_Windmill_Gears", 65);
-            hitboxes.Add("ARAMChaosNexus", 65);
-            hitboxes.Add("TT_NWraith", 50);
-            hitboxes.Add("TT_OrderTurret4", 88.4);
-            hitboxes.Add("Odin_SOG_Chaos_Crystal", 65);
-            hitboxes.Add("TT_SpiderLayer_Web", 65);
-            hitboxes.Add("OdinQuestIndicator", 1);
-            hitboxes.Add("JarvanIVStandard", 65);
-            hitboxes.Add("TT_DummyPusher", 65);
-            hitboxes.Add("OdinClaw", 65);
-            hitboxes.Add("EliseSpiderling", 1);
-            hitboxes.Add("QuinnValor", 65);
-            hitboxes.Add("UdyrTigerUlt", 65);
-            hitboxes.Add("UdyrTurtleUlt", 65);
-            hitboxes.Add("UdyrUlt", 65);
-            hitboxes.Add("UdyrPhoenixUlt", 65);
-            hitboxes.Add("ShacoBox", 10);
-            hitboxes.Add("HA_AP_Poro", 65);
-            hitboxes.Add("AnnieTibbers", 80);
-            hitboxes.Add("UdyrPhoenix", 65);
-            hitboxes.Add("UdyrTurtle", 65);
-            hitboxes.Add("UdyrTiger", 65);
-            hitboxes.Add("HA_AP_OrderShrineTurret", 88.4);
-            hitboxes.Add("HA_AP_OrderTurretRubble", 65);
-            hitboxes.Add("HA_AP_Chains_Long", 65);
-            hitboxes.Add("HA_AP_OrderCloth", 65);
-            hitboxes.Add("HA_AP_PeriphBridge", 65);
-            hitboxes.Add("HA_AP_BridgeLaneStatue", 65);
-            hitboxes.Add("HA_AP_ChaosTurretRubble", 88.4);
-            hitboxes.Add("HA_AP_BannerMidBridge", 65);
-            hitboxes.Add("HA_AP_PoroSpawner", 50);
-            hitboxes.Add("HA_AP_Cutaway", 65);
-            hitboxes.Add("HA_AP_Chains", 65);
-            hitboxes.Add("HA_AP_ShpSouth", 65);
-            hitboxes.Add("HA_AP_HeroTower", 65);
-            hitboxes.Add("HA_AP_ShpNorth", 65);
-            hitboxes.Add("ChaosInhibitor_D", 65);
-            hitboxes.Add("ZacRebirthBloblet", 65);
-            hitboxes.Add("OrderInhibitor_D", 65);
-            hitboxes.Add("Nidalee_Spear", 65);
-            hitboxes.Add("Nidalee_Cougar", 65);
-            hitboxes.Add("TT_Buffplat_Chain", 65);
-            hitboxes.Add("WriggleLantern", 1);
-            hitboxes.Add("TwistedLizardElder", 65);
-            hitboxes.Add("RabidWolf", 65);
-            hitboxes.Add("HeimerTGreen", 50);
-            hitboxes.Add("HeimerTRed", 50);
-            hitboxes.Add("ViktorFF", 65);
-            hitboxes.Add("TwistedGolem", 80);
-            hitboxes.Add("TwistedSmallWolf", 50);
-            hitboxes.Add("TwistedGiantWolf", 65);
-            hitboxes.Add("TwistedTinyWraith", 50);
-            hitboxes.Add("TwistedBlueWraith", 50);
-            hitboxes.Add("TwistedYoungLizard", 50);
-            hitboxes.Add("Red_Minion_Melee", 48);
-            hitboxes.Add("Blue_Minion_Melee", 48);
-            hitboxes.Add("Blue_Minion_Healer", 48);
-            hitboxes.Add("Ghast", 60);
-            hitboxes.Add("blueDragon", 100);
-            hitboxes.Add("Red_Minion_MechRange", 65);
-            hitboxes.Add("Test_CubeSphere", 65);
+            public readonly float animationTime;
+            public readonly Obj_AI_Base attacker;
+            public readonly float damage;
+            public readonly float hitTime;
+            public readonly Vector3 pos;
+            public readonly float projectileSpeed;
+            public readonly float startTime;
+            public readonly Obj_AI_Base target;
+            public readonly float windUpTime;
+
+            public ActiveAttacks(Obj_AI_Base attacker, Obj_AI_Base target, float startTime, float windUpTime,
+                                 float hitTime, Vector3 pos, float projectileSpeed, float damage, float animationTime)
+            {
+                this.attacker = attacker;
+                this.target = target;
+                this.startTime = startTime;
+                this.windUpTime = windUpTime;
+                this.hitTime = hitTime;
+                this.pos = pos;
+                this.projectileSpeed = projectileSpeed;
+                this.damage = damage;
+                this.animationTime = animationTime;
+            }
+        }
+
+        public class BestPrediction
+        {
+            private readonly bool valid;
+            public Vector3 castPosition;
+            public int hitChance;
+
+            public BestPrediction()
+            {
+                valid = false;
+            }
+
+            public BestPrediction(Vector3 castPosition, int hitChance)
+            {
+                this.castPosition = castPosition;
+                this.hitChance = hitChance;
+                valid = true;
+            }
+
+            public bool IsValid()
+            {
+                return valid;
+            }
+        }
+
+        public class BestPredictionAOE
+        {
+            private readonly bool valid;
+            public Vector3 castPosition;
+            public int hitChance;
+            public int maxHits;
+            public List<Vector3> positions;
+
+            public BestPredictionAOE()
+            {
+                valid = false;
+            }
+
+            public BestPredictionAOE(Vector3 castPosition, int hitChance, int maxHits, List<Vector3> positions)
+            {
+                this.castPosition = castPosition;
+                this.hitChance = hitChance;
+                this.maxHits = maxHits;
+                this.positions = positions;
+                valid = true;
+            }
+
+            public bool IsValid()
+            {
+                return valid;
+            }
+        }
+
+        private class Blinks
+        {
+            public readonly float delay;
+            public readonly float delay2;
+            public readonly float range;
+
+            public Blinks(float range, float delay, float delay2)
+            {
+                this.range = range;
+                this.delay = delay;
+                this.delay2 = delay2;
+            }
+        }
+
+        private class Dashes
+        {
+            public float duration;
+            public Vector3 endPos;
+            public float endT;
+            public float endT2;
+            public bool isBlink;
+            public Vector3 startPos;
+
+            public Dashes(bool isBlink, float duration, float endT, float endT2, Vector3 startPos, Vector3 endPos)
+            {
+                this.isBlink = isBlink;
+                this.duration = duration;
+                this.endT = endT;
+                this.endT2 = endT2;
+                this.startPos = startPos;
+                this.endPos = endPos;
+            }
         }
     }
 }
